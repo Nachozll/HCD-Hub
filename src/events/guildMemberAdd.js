@@ -17,7 +17,6 @@ export default {
         const { guild, user } = member;
       // HCD - Roles automáticos al entrar
 const autoRoleIds = [
-    '1546713697395671060', // Desarrollo
     '1546713985074864149', // Equipo
     '1546992095032774736', // Grupo
     '1546992380908015646', // Estado
