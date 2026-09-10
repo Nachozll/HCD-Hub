@@ -15,6 +15,22 @@ export default {
   async execute(member) {
     try {
         const { guild, user } = member;
+      // HCD - Roles automáticos al entrar
+const autoRoleIds = [
+    '1546713697395671060', // Desarrollo
+    '1546713985074864149', // Equipo
+    '1546992095032774736', // Grupo
+    '1546992380908015646', // Estado
+    '1546992380975259688', // Notificaciones
+    '1546993476556554340'  // Sanciones
+];
+
+try {
+    await member.roles.add(autoRoleIds);
+    logger.info(`Autoroles asignados a ${user.tag}`);
+} catch (error) {
+    logger.error(`No se pudieron asignar los autoroles a ${user.tag}:`, error);
+}
         
         const config = await getGuildConfig(member.client, guild.id);
         
