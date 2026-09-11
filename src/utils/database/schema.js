@@ -159,7 +159,84 @@ export const tableStatements = [
         PRIMARY KEY (guild_id, role_id),
         FOREIGN KEY (guild_id) REFERENCES ${t.guilds}(id) ON DELETE CASCADE
     )`,
+    `CREATE TABLE IF NOT EXISTS ${t.hcd_teams} (
+        id SERIAL PRIMARY KEY,
+        guild_id VARCHAR(20) NOT NULL,
+        name VARCHAR(100) NOT NULL,
+        tag VARCHAR(20),
+        manager_id VARCHAR(20) NOT NULL,
+        role_id VARCHAR(20),
+        discord_url TEXT,
+        logo_url TEXT,
+        active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
+        FOREIGN KEY (guild_id)
+            REFERENCES ${t.guilds}(id)
+            ON DELETE CASCADE,
+
+        UNIQUE(guild_id, name),
+        UNIQUE(guild_id, role_id)
+    )`,
+
+    `CREATE TABLE IF NOT EXISTS ${t.hcd_team_members} (
+        id SERIAL PRIMARY KEY,
+        guild_id VARCHAR(20) NOT NULL,
+        team_id INTEGER NOT NULL,
+        user_id VARCHAR(20) NOT NULL,
+        position VARCHAR(20) NOT NULL,
+        joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+        FOREIGN KEY (guild_id)
+            REFERENCES ${t.guilds}(id)
+            ON DELETE CASCADE,
+
+        FOREIGN KEY (team_id)
+            REFERENCES ${t.hcd_teams}(id)
+            ON DELETE CASCADE,
+
+        CONSTRAINT hcd_team_member_position
+            CHECK (position IN ('captain', 'main', 'sub')),
+
+        UNIQUE(guild_id, user_id)
+    )`,
+
+    `CREATE TABLE IF NOT EXISTS ${t.hcd_team_invites} (
+        id SERIAL PRIMARY KEY,
+        guild_id VARCHAR(20) NOT NULL,
+        team_id INTEGER NOT NULL,
+        user_id VARCHAR(20) NOT NULL,
+        invited_by VARCHAR(20) NOT NULL,
+        position VARCHAR(20) NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+        FOREIGN KEY (guild_id)
+            REFERENCES ${t.guilds}(id)
+            ON DELETE CASCADE,
+
+        FOREIGN KEY (team_id)
+            REFERENCES ${t.hcd_teams}(id)
+            ON DELETE CASCADE,
+
+        CONSTRAINT hcd_team_invite_position
+            CHECK (position IN ('captain', 'main', 'sub')),
+
+        CONSTRAINT hcd_team_invite_status
+            CHECK (
+                status IN (
+                    'pending',
+                    'accepted',
+                    'declined',
+                    'expired',
+                    'cancelled'
+                )
+            )
+    )`,
     `CREATE TABLE IF NOT EXISTS ${t.temp_data} (
         key VARCHAR(255) PRIMARY KEY,
         value JSONB NOT NULL,
@@ -194,6 +271,27 @@ export const indexStatements = [
     `CREATE INDEX IF NOT EXISTS idx_verification_audit_created_at ON ${t.verification_audit}(created_at)`,
     `CREATE INDEX IF NOT EXISTS idx_temp_data_expires_at ON ${t.temp_data}(expires_at)`,
     `CREATE INDEX IF NOT EXISTS idx_cache_data_expires_at ON ${t.cache_data}(expires_at)`,
+
+    `CREATE INDEX IF NOT EXISTS idx_hcd_teams_guild_id
+        ON ${t.hcd_teams}(guild_id)`,
+
+    `CREATE INDEX IF NOT EXISTS idx_hcd_team_members_team_id
+        ON ${t.hcd_team_members}(team_id)`,
+
+    `CREATE INDEX IF NOT EXISTS idx_hcd_team_members_user_id
+        ON ${t.hcd_team_members}(user_id)`,
+
+    `CREATE INDEX IF NOT EXISTS idx_hcd_team_invites_team_id
+        ON ${t.hcd_team_invites}(team_id)`,
+
+    `CREATE INDEX IF NOT EXISTS idx_hcd_team_invites_user_id
+        ON ${t.hcd_team_invites}(user_id)`,
+
+    `CREATE INDEX IF NOT EXISTS idx_hcd_team_invites_status
+        ON ${t.hcd_team_invites}(status)`,
+
+    `CREATE INDEX IF NOT EXISTS idx_hcd_team_invites_expires_at
+        ON ${t.hcd_team_invites}(expires_at)`,
 ];
 
 export const UPDATE_TIMESTAMP_FUNCTION = `
@@ -224,4 +322,8 @@ export const triggerDefinitions = [
     { name: 'update_giveaways_updated_at', table: t.giveaways },
     { name: 'update_tickets_updated_at', table: t.tickets },
     { name: 'update_afk_status_updated_at', table: t.afk_status },
-];
+
+    { name: 'update_hcd_teams_updated_at', table: t.hcd_teams },
+    { name: 'update_hcd_team_members_updated_at', table: t.hcd_team_members },
+    { name: 'update_hcd_team_invites_updated_at', table: t.hcd_team_invites },
+    ];
