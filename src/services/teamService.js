@@ -1,5 +1,22 @@
 import { logger } from '../utils/logger.js';
 import { createError, ErrorTypes } from '../utils/errorHandler.js';
+import {
+    createTeam,
+    getTeamById,
+    getTeamByName,
+    getActiveTeams,
+    getTeamRoster,
+    getPlayerMembership,
+    getTeamMember,
+    getPendingTeamInvite,
+    createTeamInvite,
+    getTeamInviteById,
+    acceptTeamInvite,
+    declineTeamInvite,
+    removeTeamMember,
+    moveTeamMember,
+    expireTeamInvites,
+} from '../utils/database/teams.js';
 
 const TEAM_LIMITS = Object.freeze({
     captain: 2,
@@ -392,6 +409,615 @@ class TeamService {
                 total: TEAM_MAX_MEMBERS,
             },
         };
+    }
+        /**
+     * Creates a new HCD team.
+     */
+    static async create(data) {
+        try {
+            this.validateTeamData(data);
+
+            const existingTeam = await getTeamByName(
+                data.guildId,
+                data.name,
+            );
+
+            if (existingTeam) {
+                throw createError(
+                    'Team already exists',
+                    ErrorTypes.VALIDATION,
+                    'A team with this name already exists.',
+                    {
+                        guildId: data.guildId,
+                        name: data.name,
+                    },
+                );
+            }
+
+            const team = await createTeam({
+                guildId: data.guildId,
+                name: String(data.name).trim(),
+                tag: data.tag
+                    ? String(data.tag).trim()
+                    : null,
+                managerId: data.managerId,
+                roleId: data.roleId || null,
+                discordUrl: data.discordUrl || null,
+                logoUrl: data.logoUrl || null,
+            });
+
+            logger.info('HCD team created', {
+                guildId: data.guildId,
+                teamId: team?.id,
+                name: team?.name,
+                managerId: data.managerId,
+            });
+
+            return team;
+        } catch (error) {
+            return this.handleError(
+                'create team',
+                error,
+                {
+                    guildId: data?.guildId,
+                    name: data?.name,
+                },
+            );
+        }
+    }
+
+    /**
+     * Returns an HCD team.
+     */
+    static async get(guildId, teamId) {
+        try {
+            const team = await getTeamById(
+                guildId,
+                teamId,
+            );
+
+            if (!team) {
+                throw createError(
+                    'Team not found',
+                    ErrorTypes.VALIDATION,
+                    'This team does not exist.',
+                    {
+                        guildId,
+                        teamId,
+                    },
+                );
+            }
+
+            return team;
+        } catch (error) {
+            return this.handleError(
+                'get team',
+                error,
+                {
+                    guildId,
+                    teamId,
+                },
+            );
+        }
+    }
+
+    /**
+     * Returns all active HCD teams.
+     */
+    static async getTeams(guildId) {
+        try {
+            return await getActiveTeams(guildId);
+        } catch (error) {
+            return this.handleError(
+                'get teams',
+                error,
+                { guildId },
+            );
+        }
+    }
+
+    /**
+     * Returns a team's complete roster.
+     */
+    static async getRoster(guildId, teamId) {
+        try {
+            const team = await this.get(
+                guildId,
+                teamId,
+            );
+
+            const members = await getTeamRoster(
+                guildId,
+                teamId,
+            );
+
+            return {
+                team,
+                members,
+                ...this.buildRosterSummary(members),
+            };
+        } catch (error) {
+            return this.handleError(
+                'get roster',
+                error,
+                {
+                    guildId,
+                    teamId,
+                },
+            );
+        }
+    }
+
+    /**
+     * Creates a 24-hour invitation for a player.
+     */
+    static async invitePlayer({
+        guildId,
+        teamId,
+        userId,
+        invitedBy,
+        position,
+        isStaff = false,
+    }) {
+        try {
+            this.validateInviteData({
+                guildId,
+                teamId,
+                userId,
+                invitedBy,
+                position,
+            });
+
+            const team = await this.get(
+                guildId,
+                teamId,
+            );
+
+            if (!team.active) {
+                throw createError(
+                    'Team is inactive',
+                    ErrorTypes.VALIDATION,
+                    'This team is currently inactive.',
+                    {
+                        guildId,
+                        teamId,
+                    },
+                );
+            }
+
+            const executorMembership =
+                await getTeamMember(
+                    guildId,
+                    teamId,
+                    invitedBy,
+                );
+
+            this.assertManagementPermission({
+                executorId: invitedBy,
+                team,
+                executorMembership,
+                targetPosition: position,
+                isStaff,
+            });
+
+            const existingMembership =
+                await getPlayerMembership(
+                    guildId,
+                    userId,
+                );
+
+            if (existingMembership) {
+                throw createError(
+                    'Player already belongs to a team',
+                    ErrorTypes.VALIDATION,
+                    'This player already belongs to an HCD team.',
+                    {
+                        guildId,
+                        userId,
+                        teamId:
+                            existingMembership.team_id,
+                    },
+                );
+            }
+
+            await expireTeamInvites(guildId);
+
+            const pendingInvite =
+                await getPendingTeamInvite(
+                    guildId,
+                    teamId,
+                    userId,
+                );
+
+            if (pendingInvite) {
+                throw createError(
+                    'Player already has pending invitation',
+                    ErrorTypes.VALIDATION,
+                    'This player already has a pending invitation from this team.',
+                    {
+                        guildId,
+                        teamId,
+                        userId,
+                        inviteId:
+                            pendingInvite.id,
+                    },
+                );
+            }
+
+            const roster = await getTeamRoster(
+                guildId,
+                teamId,
+            );
+
+            this.assertAvailableSlot(
+                roster,
+                position,
+            );
+
+            const invite = await createTeamInvite({
+                guildId,
+                teamId,
+                userId,
+                invitedBy,
+                position,
+                expiresAt:
+                    this.createInviteExpiration(),
+            });
+
+            logger.info('HCD team invitation created', {
+                guildId,
+                teamId,
+                userId,
+                invitedBy,
+                position,
+                inviteId: invite?.id,
+            });
+
+            return {
+                team,
+                invite,
+            };
+        } catch (error) {
+            return this.handleError(
+                'invite player',
+                error,
+                {
+                    guildId,
+                    teamId,
+                    userId,
+                    invitedBy,
+                    position,
+                },
+            );
+        }
+    }
+
+    /**
+     * Accepts a pending invitation.
+     */
+    static async acceptInvite(
+        guildId,
+        inviteId,
+        userId,
+    ) {
+        try {
+            const invite =
+                await getTeamInviteById(
+                    guildId,
+                    inviteId,
+                );
+
+            this.validatePendingInvite(
+                invite,
+                userId,
+            );
+
+            const result =
+                await acceptTeamInvite(
+                    guildId,
+                    inviteId,
+                    userId,
+                );
+
+            if (!result.accepted) {
+                const messages = {
+                    expired:
+                        'This team invitation has expired.',
+                    already_in_team:
+                        'You already belong to an HCD team.',
+                    slot_full:
+                        'The requested roster position is no longer available.',
+                };
+
+                throw createError(
+                    `Team invitation could not be accepted: ${result.reason}`,
+                    ErrorTypes.VALIDATION,
+                    messages[result.reason] ||
+                        'This team invitation can no longer be accepted.',
+                    {
+                        guildId,
+                        inviteId,
+                        userId,
+                        reason: result.reason,
+                    },
+                );
+            }
+
+            logger.info('HCD team invitation accepted', {
+                guildId,
+                inviteId,
+                userId,
+                teamId: result.team?.id,
+                position:
+                    result.member?.position,
+            });
+
+            return result;
+        } catch (error) {
+            return this.handleError(
+                'accept invitation',
+                error,
+                {
+                    guildId,
+                    inviteId,
+                    userId,
+                },
+            );
+        }
+    }
+
+    /**
+     * Declines a pending invitation.
+     */
+    static async declineInvite(
+        guildId,
+        inviteId,
+        userId,
+    ) {
+        try {
+            const invite =
+                await getTeamInviteById(
+                    guildId,
+                    inviteId,
+                );
+
+            this.validatePendingInvite(
+                invite,
+                userId,
+            );
+
+            const declined =
+                await declineTeamInvite(
+                    guildId,
+                    inviteId,
+                    userId,
+                );
+
+            if (!declined) {
+                throw createError(
+                    'Unable to decline team invitation',
+                    ErrorTypes.VALIDATION,
+                    'This team invitation can no longer be declined.',
+                    {
+                        guildId,
+                        inviteId,
+                        userId,
+                    },
+                );
+            }
+
+            logger.info('HCD team invitation declined', {
+                guildId,
+                inviteId,
+                userId,
+                teamId: declined.team_id,
+            });
+
+            return declined;
+        } catch (error) {
+            return this.handleError(
+                'decline invitation',
+                error,
+                {
+                    guildId,
+                    inviteId,
+                    userId,
+                },
+            );
+        }
+    }
+
+    /**
+     * Removes a player from a team.
+     */
+    static async removePlayer({
+        guildId,
+        teamId,
+        userId,
+        removedBy,
+        isStaff = false,
+    }) {
+        try {
+            const team = await this.get(
+                guildId,
+                teamId,
+            );
+
+            const targetMembership =
+                await getTeamMember(
+                    guildId,
+                    teamId,
+                    userId,
+                );
+
+            if (!targetMembership) {
+                throw createError(
+                    'Player is not in team',
+                    ErrorTypes.VALIDATION,
+                    'This player is not part of this team.',
+                    {
+                        guildId,
+                        teamId,
+                        userId,
+                    },
+                );
+            }
+
+            const executorMembership =
+                await getTeamMember(
+                    guildId,
+                    teamId,
+                    removedBy,
+                );
+
+            this.assertManagementPermission({
+                executorId: removedBy,
+                team,
+                executorMembership,
+                targetPosition:
+                    targetMembership.position,
+                isStaff,
+            });
+
+            const removed =
+                await removeTeamMember(
+                    guildId,
+                    teamId,
+                    userId,
+                );
+
+            logger.info('HCD team member removed', {
+                guildId,
+                teamId,
+                userId,
+                removedBy,
+                position:
+                    targetMembership.position,
+            });
+
+            return removed;
+        } catch (error) {
+            return this.handleError(
+                'remove player',
+                error,
+                {
+                    guildId,
+                    teamId,
+                    userId,
+                    removedBy,
+                },
+            );
+        }
+    }
+
+    /**
+     * Moves a player between roster positions.
+     */
+    static async movePlayer({
+        guildId,
+        teamId,
+        userId,
+        newPosition,
+        movedBy,
+        isStaff = false,
+    }) {
+        try {
+            this.validatePosition(newPosition);
+
+            const team = await this.get(
+                guildId,
+                teamId,
+            );
+
+            const targetMembership =
+                await getTeamMember(
+                    guildId,
+                    teamId,
+                    userId,
+                );
+
+            if (!targetMembership) {
+                throw createError(
+                    'Player is not in team',
+                    ErrorTypes.VALIDATION,
+                    'This player is not part of this team.',
+                    {
+                        guildId,
+                        teamId,
+                        userId,
+                    },
+                );
+            }
+
+            const executorMembership =
+                await getTeamMember(
+                    guildId,
+                    teamId,
+                    movedBy,
+                );
+
+            const captainChange =
+                targetMembership.position ===
+                    'captain' ||
+                newPosition === 'captain';
+
+            this.assertManagementPermission({
+                executorId: movedBy,
+                team,
+                executorMembership,
+                targetPosition:
+                    captainChange
+                        ? 'captain'
+                        : newPosition,
+                isStaff,
+            });
+
+            const result =
+                await moveTeamMember(
+                    guildId,
+                    teamId,
+                    userId,
+                    newPosition,
+                );
+
+            if (!result.moved) {
+                throw createError(
+                    'Destination roster position is full',
+                    ErrorTypes.VALIDATION,
+                    `There are no available ${newPosition} slots in this team.`,
+                    {
+                        guildId,
+                        teamId,
+                        userId,
+                        newPosition,
+                    },
+                );
+            }
+
+            logger.info('HCD team member moved', {
+                guildId,
+                teamId,
+                userId,
+                movedBy,
+                oldPosition:
+                    targetMembership.position,
+                newPosition,
+            });
+
+            return result;
+        } catch (error) {
+            return this.handleError(
+                'move player',
+                error,
+                {
+                    guildId,
+                    teamId,
+                    userId,
+                    movedBy,
+                    newPosition,
+                },
+            );
+        }
     }
 
     /**
