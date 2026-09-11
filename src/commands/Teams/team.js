@@ -364,6 +364,13 @@ async function handleRemove(interaction) {
         true,
     );
 
+    // Fetch the team before removing the member so we still know
+    // which Discord role must be removed afterwards.
+    const team = await TeamService.get(
+        interaction.guildId,
+        teamId,
+    );
+
     const removed = await TeamService.removePlayer({
         guildId: interaction.guildId,
         teamId,
@@ -380,6 +387,96 @@ async function handleRemove(interaction) {
         );
     }
 
+    const roleWarnings = [];
+
+    try {
+        const member = await interaction.guild.members.fetch(
+            player.id,
+        );
+
+        if (team.role_id) {
+            try {
+                if (member.roles.cache.has(team.role_id)) {
+                    await member.roles.remove(
+                        team.role_id,
+                        `Removed from HCD team ${team.name}`,
+                    );
+                }
+            } catch (error) {
+                logger.warn(
+                    'Failed to remove team role after roster removal',
+                    {
+                        guildId: interaction.guildId,
+                        teamId,
+                        userId: player.id,
+                        roleId: team.role_id,
+                        error: error.message,
+                    },
+                );
+
+                roleWarnings.push(
+                    'I could not remove the team Discord role.',
+                );
+            }
+        }
+
+        const freeAgentRoleId =
+            process.env.HCD_FREE_AGENT_ROLE_ID;
+
+        if (freeAgentRoleId) {
+            try {
+                if (!member.roles.cache.has(freeAgentRoleId)) {
+                    await member.roles.add(
+                        freeAgentRoleId,
+                        `Removed from HCD team ${team.name}`,
+                    );
+                }
+            } catch (error) {
+                logger.warn(
+                    'Failed to restore free-agent role after roster removal',
+                    {
+                        guildId: interaction.guildId,
+                        teamId,
+                        userId: player.id,
+                        roleId: freeAgentRoleId,
+                        error: error.message,
+                    },
+                );
+
+                roleWarnings.push(
+                    'I could not restore the Jugador Libre role.',
+                );
+            }
+        } else {
+            logger.warn(
+                'HCD_FREE_AGENT_ROLE_ID is not configured',
+                {
+                    guildId: interaction.guildId,
+                    teamId,
+                    userId: player.id,
+                },
+            );
+
+            roleWarnings.push(
+                'Jugador Libre could not be restored because HCD_FREE_AGENT_ROLE_ID is not configured.',
+            );
+        }
+    } catch (error) {
+        logger.warn(
+            'Failed to fetch guild member after roster removal',
+            {
+                guildId: interaction.guildId,
+                teamId,
+                userId: player.id,
+                error: error.message,
+            },
+        );
+
+        roleWarnings.push(
+            'The roster was updated, but Discord roles could not be synchronized.',
+        );
+    }
+
     await InteractionHelper.safeEditReply(
         interaction,
         {
@@ -387,7 +484,14 @@ async function handleRemove(interaction) {
                 '✅ **Player removed from team**',
                 '',
                 `**Player:** ${player}`,
+                `**Team:** ${team.name}${
+                    team.tag ? ` [${team.tag}]` : ''
+                }`,
                 `**Team ID:** \`${teamId}\``,
+                '',
+                roleWarnings.length
+                    ? `⚠️ ${roleWarnings.join(' ')}`
+                    : '🔄 Team role removed and Jugador Libre restored.',
             ].join('\n'),
         },
     );
