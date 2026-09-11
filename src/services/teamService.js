@@ -5,6 +5,7 @@ import {
     getTeamById,
     getTeamByName,
     getActiveTeams,
+    updateTeam,
     getTeamRoster,
     getPlayerMembership,
     getTeamMember,
@@ -469,6 +470,141 @@ class TeamService {
     /**
      * Returns an HCD team.
      */
+    /**
+ * Updates an existing HCD team.
+ */
+static async update({
+    guildId,
+    teamId,
+    name = undefined,
+    tag = undefined,
+    managerId = undefined,
+    roleId = undefined,
+    discordUrl = undefined,
+    logoUrl = undefined,
+}) {
+    try {
+        const team = await this.get(
+            guildId,
+            teamId,
+        );
+
+        const updates = {};
+
+        if (name !== undefined) {
+            const cleanName = String(name).trim();
+
+            if (
+                cleanName.length < 2 ||
+                cleanName.length > 100
+            ) {
+                throw createError(
+                    'Invalid team name length',
+                    ErrorTypes.VALIDATION,
+                    'Team name must contain between 2 and 100 characters.',
+                );
+            }
+
+            const existingTeam =
+                await getTeamByName(
+                    guildId,
+                    cleanName,
+                );
+
+            if (
+                existingTeam &&
+                Number(existingTeam.id) !== Number(team.id)
+            ) {
+                throw createError(
+                    'Team name already exists',
+                    ErrorTypes.VALIDATION,
+                    'Another HCD team already uses this name.',
+                );
+            }
+
+            updates.name = cleanName;
+        }
+
+        if (tag !== undefined) {
+            const cleanTag =
+                tag === null
+                    ? null
+                    : String(tag).trim();
+
+            if (
+                cleanTag &&
+                cleanTag.length > 20
+            ) {
+                throw createError(
+                    'Invalid team tag length',
+                    ErrorTypes.VALIDATION,
+                    'Team tag cannot contain more than 20 characters.',
+                );
+            }
+
+            updates.tag = cleanTag || null;
+        }
+
+        if (managerId !== undefined) {
+            updates.managerId = managerId;
+        }
+
+        if (roleId !== undefined) {
+            updates.roleId = roleId;
+        }
+
+        if (discordUrl !== undefined) {
+            updates.discordUrl =
+                discordUrl || null;
+        }
+
+        if (logoUrl !== undefined) {
+            updates.logoUrl =
+                logoUrl || null;
+        }
+
+        if (!Object.keys(updates).length) {
+            throw createError(
+                'No team updates provided',
+                ErrorTypes.VALIDATION,
+                'You must provide at least one field to update.',
+            );
+        }
+
+        const updatedTeam =
+            await updateTeam(
+                guildId,
+                teamId,
+                updates,
+            );
+
+        if (!updatedTeam) {
+            throw createError(
+                'Team update failed',
+                ErrorTypes.VALIDATION,
+                'The team could not be updated.',
+            );
+        }
+
+        logger.info('HCD team updated', {
+            guildId,
+            teamId,
+            updatedFields:
+                Object.keys(updates),
+        });
+
+        return updatedTeam;
+    } catch (error) {
+        return this.handleError(
+            'update team',
+            error,
+            {
+                guildId,
+                teamId,
+            },
+        );
+    }
+}
     static async get(guildId, teamId) {
         try {
             const team = await getTeamById(
