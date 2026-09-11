@@ -92,6 +92,131 @@ function getInviteData(args = []) {
 }
 
 /**
+ * Synchronizes Discord roles after a player
+ * successfully joins an HCD team.
+ */
+async function syncAcceptedMemberRoles(
+    client,
+    guildId,
+    userId,
+    team,
+) {
+    const freeAgentRoleId =
+        process.env.HCD_FREE_AGENT_ROLE_ID;
+
+    const guild = await client.guilds.fetch(guildId);
+
+    const guildMember =
+        await guild.members.fetch(userId);
+
+    const warnings = [];
+
+    if (team.role_id) {
+        try {
+            await guildMember.roles.add(
+                team.role_id,
+                `Joined HCD team: ${team.name}`,
+            );
+
+            logger.info(
+                'HCD team role assigned',
+                {
+                    guildId,
+                    teamId: team.id,
+                    userId,
+                    roleId: team.role_id,
+                },
+            );
+        } catch (error) {
+            warnings.push(
+                'The team role could not be assigned.',
+            );
+
+            logger.warn(
+                'Failed to assign HCD team role',
+                {
+                    guildId,
+                    teamId: team.id,
+                    userId,
+                    roleId: team.role_id,
+                    error: error.message,
+                },
+            );
+        }
+    } else {
+        warnings.push(
+            'This team does not have a Discord role configured.',
+        );
+
+        logger.warn(
+            'HCD team has no Discord role configured',
+            {
+                guildId,
+                teamId: team.id,
+                userId,
+            },
+        );
+    }
+
+    if (freeAgentRoleId) {
+        try {
+            if (
+                guildMember.roles.cache.has(
+                    freeAgentRoleId,
+                )
+            ) {
+                await guildMember.roles.remove(
+                    freeAgentRoleId,
+                    `Joined HCD team: ${team.name}`,
+                );
+
+                logger.info(
+                    'HCD free agent role removed',
+                    {
+                        guildId,
+                        teamId: team.id,
+                        userId,
+                        roleId:
+                            freeAgentRoleId,
+                    },
+                );
+            }
+        } catch (error) {
+            warnings.push(
+                'The Jugador Libre role could not be removed.',
+            );
+
+            logger.warn(
+                'Failed to remove HCD free agent role',
+                {
+                    guildId,
+                    teamId: team.id,
+                    userId,
+                    roleId:
+                        freeAgentRoleId,
+                    error: error.message,
+                },
+            );
+        }
+    } else {
+        warnings.push(
+            'The Jugador Libre role is not configured.',
+        );
+
+        logger.warn(
+            'HCD_FREE_AGENT_ROLE_ID is not configured',
+            {
+                guildId,
+                teamId: team.id,
+                userId,
+            },
+        );
+    }
+
+    return warnings;
+}
+
+/**
  * Accept team invitation button.
  */
 const teamInviteAcceptHandler = {
@@ -116,6 +241,14 @@ const teamInviteAcceptHandler = {
             const team = result.team;
             const member = result.member;
 
+            const roleWarnings =
+                await syncAcceptedMemberRoles(
+                    client,
+                    guildId,
+                    interaction.user.id,
+                    team,
+                );
+
             await interaction.message.edit({
                 components: [
                     buildDisabledInviteButtons(
@@ -137,23 +270,36 @@ const teamInviteAcceptHandler = {
                 );
             });
 
+            const response = [
+                '✅ **Team invitation accepted**',
+                '',
+                `**Team:** ${team.name}${
+                    team.tag
+                        ? ` [${team.tag}]`
+                        : ''
+                }`,
+                `**Position:** ${
+                    POSITION_NAMES[
+                        member.position
+                    ] ?? member.position
+                }`,
+                '',
+                'You have been added to the competitive roster.',
+            ];
+
+            if (roleWarnings.length > 0) {
+                response.push(
+                    '',
+                    '⚠️ **Discord role synchronization warning**',
+                    ...roleWarnings.map(
+                        (warning) =>
+                            `• ${warning}`,
+                    ),
+                );
+            }
+
             await interaction.followUp({
-                content: [
-                    '✅ **Team invitation accepted**',
-                    '',
-                    `**Team:** ${team.name}${
-                        team.tag
-                            ? ` [${team.tag}]`
-                            : ''
-                    }`,
-                    `**Position:** ${
-                        POSITION_NAMES[
-                            member.position
-                        ] ?? member.position
-                    }`,
-                    '',
-                    'You have been added to the competitive roster.',
-                ].join('\n'),
+                content: response.join('\n'),
             });
 
             logger.info(
@@ -166,6 +312,8 @@ const teamInviteAcceptHandler = {
                         interaction.user.id,
                     position:
                         member.position,
+                    roleWarnings:
+                        roleWarnings.length,
                 },
             );
         } catch (error) {
