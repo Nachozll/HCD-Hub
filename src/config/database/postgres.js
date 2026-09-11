@@ -16,6 +16,9 @@ const configuredTables = {
     invite_tracking: 'invite_tracking',
     application_roles: 'application_roles',
     verification_audit: 'verification_audit',
+        hcd_teams: 'hcd_teams',
+    hcd_team_members: 'hcd_team_members',
+    hcd_team_invites: 'hcd_team_invites',
     temp_data: 'temp_data',
     cache_data: 'cache_data',
 };
@@ -35,6 +38,9 @@ const allowedTableIdentifiers = new Set([
     'invite_tracking',
     'application_roles',
     'verification_audit',
+        'hcd_teams',
+    'hcd_team_members',
+    'hcd_team_invites',
     'temp_data',
     'cache_data',
 ]);
