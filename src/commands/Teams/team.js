@@ -1,6 +1,9 @@
 import {
     SlashCommandBuilder,
     PermissionFlagsBits,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
 } from 'discord.js';
 
 import TeamService, {
@@ -173,6 +176,65 @@ async function handleInvite(interaction) {
         isStaff: isHcdStaff(interaction),
     });
 
+    const inviteId = result.invite.id;
+
+    const buttons = new ActionRowBuilder()
+        .addComponents(
+            new ButtonBuilder()
+                .setCustomId(
+    `team_invite_accept:${interaction.guildId}:${inviteId}`,
+)
+                .setLabel('Accept')
+                .setStyle(ButtonStyle.Success),
+
+            new ButtonBuilder()
+                .setCustomId(
+    `team_invite_decline:${interaction.guildId}:${inviteId}`,
+)
+                .setLabel('Decline')
+                .setStyle(ButtonStyle.Danger),
+        );
+
+    let inviteMessageSent = false;
+
+    try {
+        await player.send({
+            content: [
+                '## HCD Team Invitation',
+                '',
+                `You have been invited to join **${result.team.name}${
+                    result.team.tag
+                        ? ` [${result.team.tag}]`
+                        : ''
+                }**`,
+                '',
+                `**Position:** ${POSITION_NAMES[position]}`,
+                `**Invited by:** <@${interaction.user.id}>`,
+                `**Expires:** <t:${Math.floor(
+                    new Date(
+                        result.invite.expires_at,
+                    ).getTime() / 1000,
+                )}:R>`,
+                '',
+                'Use the buttons below to accept or decline the invitation.',
+            ].join('\n'),
+            components: [buttons],
+        });
+
+        inviteMessageSent = true;
+    } catch (error) {
+        logger.warn(
+            'Failed to send team invitation DM',
+            {
+                guildId: interaction.guildId,
+                teamId,
+                inviteId,
+                userId: player.id,
+                error: error.message,
+            },
+        );
+    }
+
     await InteractionHelper.safeEditReply(
         interaction,
         {
@@ -188,7 +250,11 @@ async function handleInvite(interaction) {
                     ).getTime() / 1000,
                 )}:R>`,
                 '',
-                `Invitation ID: \`${result.invite.id}\``,
+                inviteMessageSent
+                    ? '📩 The invitation was sent to the player by DM.'
+                    : '⚠️ The invitation was created, but I could not send the player a DM.',
+                '',
+                `Invitation ID: \`${inviteId}\``,
             ].join('\n'),
         },
     );
