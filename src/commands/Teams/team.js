@@ -1,0 +1,578 @@
+import {
+    SlashCommandBuilder,
+    PermissionFlagsBits,
+} from 'discord.js';
+
+import TeamService, {
+    TEAM_LIMITS,
+} from '../../services/teamService.js';
+
+import { InteractionHelper } from '../../utils/interactionHelper.js';
+import { logger } from '../../utils/logger.js';
+import {
+    TitanBotError,
+    ErrorTypes,
+} from '../../utils/errorHandler.js';
+
+const POSITION_NAMES = Object.freeze({
+    captain: 'Captain',
+    main: 'Main Roster',
+    sub: 'Substitute Roster',
+});
+
+/**
+ * Returns whether the interaction member has HCD Staff-level
+ * permissions for team management.
+ *
+ * For now this uses Discord's ManageGuild permission.
+ * Later this can be replaced/extended with HCD-specific Staff roles.
+ */
+function isHcdStaff(interaction) {
+    return interaction.memberPermissions?.has(
+        PermissionFlagsBits.ManageGuild,
+    ) ?? false;
+}
+
+/**
+ * Converts a database team ID to an integer.
+ */
+function getTeamId(interaction) {
+    const teamId = interaction.options.getInteger('team');
+
+    if (!teamId || teamId <= 0) {
+        throw new TitanBotError(
+            'Invalid team ID',
+            ErrorTypes.USER_INPUT,
+            'You must provide a valid team ID.',
+            {
+                subtype: 'invalid_team_id',
+                teamId,
+            },
+        );
+    }
+
+    return teamId;
+}
+
+/**
+ * Formats one roster section.
+ */
+function formatRosterSection(members = []) {
+    if (!members.length) {
+        return '*Empty*';
+    }
+
+    return members
+        .map((member) => `<@${member.user_id}>`)
+        .join('\n');
+}
+
+/**
+ * Handles /team create.
+ */
+async function handleCreate(interaction) {
+    if (!isHcdStaff(interaction)) {
+        throw new TitanBotError(
+            'Missing team creation permission',
+            ErrorTypes.PERMISSION,
+            'Only HCD Staff can create teams.',
+        );
+    }
+
+    const name = interaction.options.getString(
+        'name',
+        true,
+    );
+
+    const tag = interaction.options.getString('tag');
+
+    const manager = interaction.options.getUser(
+        'manager',
+        true,
+    );
+
+    const role = interaction.options.getRole('role');
+
+    const discordUrl =
+        interaction.options.getString('discord');
+
+    const logoUrl =
+        interaction.options.getString('logo');
+
+    if (manager.bot) {
+        throw new TitanBotError(
+            'Bot cannot manage team',
+            ErrorTypes.USER_INPUT,
+            'A bot cannot be assigned as Team Manager.',
+        );
+    }
+
+    const team = await TeamService.create({
+        guildId: interaction.guildId,
+        name,
+        tag,
+        managerId: manager.id,
+        roleId: role?.id ?? null,
+        discordUrl,
+        logoUrl,
+    });
+
+    await InteractionHelper.safeEditReply(
+        interaction,
+        {
+            content: [
+                '✅ **Team created successfully**',
+                '',
+                `**Name:** ${team.name}`,
+                team.tag
+                    ? `**Tag:** ${team.tag}`
+                    : null,
+                `**Team Manager:** <@${team.manager_id}>`,
+                `**Team ID:** \`${team.id}\``,
+                team.role_id
+                    ? `**Team Role:** <@&${team.role_id}>`
+                    : null,
+            ]
+                .filter(Boolean)
+                .join('\n'),
+        },
+    );
+}
+
+/**
+ * Handles /team invite.
+ */
+async function handleInvite(interaction) {
+    const teamId = getTeamId(interaction);
+
+    const player = interaction.options.getUser(
+        'player',
+        true,
+    );
+
+    const position =
+        interaction.options.getString(
+            'position',
+            true,
+        );
+
+    if (player.bot) {
+        throw new TitanBotError(
+            'Bot cannot join team',
+            ErrorTypes.USER_INPUT,
+            'You cannot invite a bot to a competitive team.',
+        );
+    }
+
+    const result = await TeamService.invitePlayer({
+        guildId: interaction.guildId,
+        teamId,
+        userId: player.id,
+        invitedBy: interaction.user.id,
+        position,
+        isStaff: isHcdStaff(interaction),
+    });
+
+    await InteractionHelper.safeEditReply(
+        interaction,
+        {
+            content: [
+                '✅ **Team invitation created**',
+                '',
+                `**Player:** ${player}`,
+                `**Team:** ${result.team.name}`,
+                `**Position:** ${POSITION_NAMES[position]}`,
+                `**Expires:** <t:${Math.floor(
+                    new Date(
+                        result.invite.expires_at,
+                    ).getTime() / 1000,
+                )}:R>`,
+                '',
+                `Invitation ID: \`${result.invite.id}\``,
+            ].join('\n'),
+        },
+    );
+}
+
+/**
+ * Handles /team remove.
+ */
+async function handleRemove(interaction) {
+    const teamId = getTeamId(interaction);
+
+    const player = interaction.options.getUser(
+        'player',
+        true,
+    );
+
+    const removed = await TeamService.removePlayer({
+        guildId: interaction.guildId,
+        teamId,
+        userId: player.id,
+        removedBy: interaction.user.id,
+        isStaff: isHcdStaff(interaction),
+    });
+
+    if (!removed) {
+        throw new TitanBotError(
+            'Team member removal failed',
+            ErrorTypes.VALIDATION,
+            'The player could not be removed from the team.',
+        );
+    }
+
+    await InteractionHelper.safeEditReply(
+        interaction,
+        {
+            content: [
+                '✅ **Player removed from team**',
+                '',
+                `**Player:** ${player}`,
+                `**Team ID:** \`${teamId}\``,
+            ].join('\n'),
+        },
+    );
+}
+
+/**
+ * Handles /team move.
+ */
+async function handleMove(interaction) {
+    const teamId = getTeamId(interaction);
+
+    const player = interaction.options.getUser(
+        'player',
+        true,
+    );
+
+    const position =
+        interaction.options.getString(
+            'position',
+            true,
+        );
+
+    const result = await TeamService.movePlayer({
+        guildId: interaction.guildId,
+        teamId,
+        userId: player.id,
+        newPosition: position,
+        movedBy: interaction.user.id,
+        isStaff: isHcdStaff(interaction),
+    });
+
+    await InteractionHelper.safeEditReply(
+        interaction,
+        {
+            content: [
+                '✅ **Roster position updated**',
+                '',
+                `**Player:** ${player}`,
+                `**New Position:** ${POSITION_NAMES[position]}`,
+                `**Team ID:** \`${teamId}\``,
+            ].join('\n'),
+        },
+    );
+
+    return result;
+}
+
+/**
+ * Handles /team roster.
+ */
+async function handleRoster(interaction) {
+    const teamId = getTeamId(interaction);
+
+    const roster = await TeamService.getRoster(
+        interaction.guildId,
+        teamId,
+    );
+
+    const {
+        team,
+        captains,
+        mains,
+        substitutes,
+        counts,
+    } = roster;
+
+    const content = [
+        `## ${team.name}${team.tag ? ` [${team.tag}]` : ''}`,
+        '',
+        `**Team Manager:** <@${team.manager_id}>`,
+        `**Players:** ${counts.total}/9`,
+        '',
+        `### Captains — ${counts.captain}/${TEAM_LIMITS.captain}`,
+        formatRosterSection(captains),
+        '',
+        `### Main Roster — ${counts.main}/${TEAM_LIMITS.main}`,
+        formatRosterSection(mains),
+        '',
+        `### Substitute Roster — ${counts.sub}/${TEAM_LIMITS.sub}`,
+        formatRosterSection(substitutes),
+    ];
+
+    if (team.discord_url) {
+        content.push(
+            '',
+            `**Faction Discord:** ${team.discord_url}`,
+        );
+    }
+
+    await InteractionHelper.safeEditReply(
+        interaction,
+        {
+            content: content.join('\n'),
+        },
+    );
+}
+
+export default {
+    data: new SlashCommandBuilder()
+        .setName('team')
+        .setDescription('Manage HCD competitive teams')
+
+        .addSubcommand((subcommand) =>
+            subcommand
+                .setName('create')
+                .setDescription(
+                    'Create a new HCD competitive team',
+                )
+                .addStringOption((option) =>
+                    option
+                        .setName('name')
+                        .setDescription('Team name')
+                        .setRequired(true)
+                        .setMaxLength(100),
+                )
+                .addUserOption((option) =>
+                    option
+                        .setName('manager')
+                        .setDescription(
+                            'Team Manager / faction leader',
+                        )
+                        .setRequired(true),
+                )
+                .addStringOption((option) =>
+                    option
+                        .setName('tag')
+                        .setDescription(
+                            'Short team tag',
+                        )
+                        .setMaxLength(20),
+                )
+                .addRoleOption((option) =>
+                    option
+                        .setName('role')
+                        .setDescription(
+                            'Discord role assigned to the team',
+                        ),
+                )
+                .addStringOption((option) =>
+                    option
+                        .setName('discord')
+                        .setDescription(
+                            'Faction Discord invite URL',
+                        ),
+                )
+                .addStringOption((option) =>
+                    option
+                        .setName('logo')
+                        .setDescription(
+                            'Team logo image URL',
+                        ),
+                ),
+        )
+
+        .addSubcommand((subcommand) =>
+            subcommand
+                .setName('invite')
+                .setDescription(
+                    'Invite a player to a team',
+                )
+                .addIntegerOption((option) =>
+                    option
+                        .setName('team')
+                        .setDescription('Team ID')
+                        .setRequired(true)
+                        .setMinValue(1),
+                )
+                .addUserOption((option) =>
+                    option
+                        .setName('player')
+                        .setDescription(
+                            'Player to invite',
+                        )
+                        .setRequired(true),
+                )
+                .addStringOption((option) =>
+                    option
+                        .setName('position')
+                        .setDescription(
+                            'Competitive roster position',
+                        )
+                        .setRequired(true)
+                        .addChoices(
+                            {
+                                name: 'Captain',
+                                value: 'captain',
+                            },
+                            {
+                                name: 'Main Roster',
+                                value: 'main',
+                            },
+                            {
+                                name: 'Substitute Roster',
+                                value: 'sub',
+                            },
+                        ),
+                ),
+        )
+
+        .addSubcommand((subcommand) =>
+            subcommand
+                .setName('remove')
+                .setDescription(
+                    'Remove a player from a team',
+                )
+                .addIntegerOption((option) =>
+                    option
+                        .setName('team')
+                        .setDescription('Team ID')
+                        .setRequired(true)
+                        .setMinValue(1),
+                )
+                .addUserOption((option) =>
+                    option
+                        .setName('player')
+                        .setDescription(
+                            'Player to remove',
+                        )
+                        .setRequired(true),
+                ),
+        )
+
+        .addSubcommand((subcommand) =>
+            subcommand
+                .setName('move')
+                .setDescription(
+                    'Move a player to another roster position',
+                )
+                .addIntegerOption((option) =>
+                    option
+                        .setName('team')
+                        .setDescription('Team ID')
+                        .setRequired(true)
+                        .setMinValue(1),
+                )
+                .addUserOption((option) =>
+                    option
+                        .setName('player')
+                        .setDescription(
+                            'Player to move',
+                        )
+                        .setRequired(true),
+                )
+                .addStringOption((option) =>
+                    option
+                        .setName('position')
+                        .setDescription(
+                            'New roster position',
+                        )
+                        .setRequired(true)
+                        .addChoices(
+                            {
+                                name: 'Captain',
+                                value: 'captain',
+                            },
+                            {
+                                name: 'Main Roster',
+                                value: 'main',
+                            },
+                            {
+                                name: 'Substitute Roster',
+                                value: 'sub',
+                            },
+                        ),
+                ),
+        )
+
+        .addSubcommand((subcommand) =>
+            subcommand
+                .setName('roster')
+                .setDescription(
+                    'View the current roster of a team',
+                )
+                .addIntegerOption((option) =>
+                    option
+                        .setName('team')
+                        .setDescription('Team ID')
+                        .setRequired(true)
+                        .setMinValue(1),
+                ),
+        ),
+
+    category: 'teams',
+
+    async execute(interaction, config, client) {
+        const deferSuccess =
+            await InteractionHelper.safeDefer(
+                interaction,
+            );
+
+        if (!deferSuccess) {
+            logger.warn(
+                'Team interaction defer failed',
+                {
+                    userId: interaction.user.id,
+                    guildId: interaction.guildId,
+                    commandName: 'team',
+                },
+            );
+
+            return;
+        }
+
+        if (!interaction.inGuild()) {
+            throw new TitanBotError(
+                'Team command used outside guild',
+                ErrorTypes.USER_INPUT,
+                'This command can only be used inside the HCD server.',
+            );
+        }
+
+        const subcommand =
+            interaction.options.getSubcommand();
+
+        switch (subcommand) {
+            case 'create':
+                await handleCreate(interaction);
+                break;
+
+            case 'invite':
+                await handleInvite(interaction);
+                break;
+
+            case 'remove':
+                await handleRemove(interaction);
+                break;
+
+            case 'move':
+                await handleMove(interaction);
+                break;
+
+            case 'roster':
+                await handleRoster(interaction);
+                break;
+
+            default:
+                throw new TitanBotError(
+                    'Unknown team subcommand',
+                    ErrorTypes.USER_INPUT,
+                    'Unknown team command.',
+                    {
+                        subcommand,
+                    },
+                );
+        }
+    },
+};
