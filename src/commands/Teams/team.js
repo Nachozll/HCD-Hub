@@ -143,6 +143,99 @@ async function handleCreate(interaction) {
 }
 
 /**
+ * Handles /team edit.
+ */
+async function handleEdit(interaction) {
+    if (!isHcdStaff(interaction)) {
+        throw new TitanBotError(
+            'Missing team edit permission',
+            ErrorTypes.PERMISSION,
+            'Only HCD Staff can edit teams.',
+        );
+    }
+
+    const teamId = getTeamId(interaction);
+
+    const name =
+        interaction.options.getString('name');
+
+    const tag =
+        interaction.options.getString('tag');
+
+    const manager =
+        interaction.options.getUser('manager');
+
+    const role =
+        interaction.options.getRole('role');
+
+    const discordUrl =
+        interaction.options.getString('discord');
+
+    const logoUrl =
+        interaction.options.getString('logo');
+
+    if (manager?.bot) {
+        throw new TitanBotError(
+            'Bot cannot manage team',
+            ErrorTypes.USER_INPUT,
+            'A bot cannot be assigned as Team Manager.',
+        );
+    }
+
+    if (
+        name === null &&
+        tag === null &&
+        manager === null &&
+        role === null &&
+        discordUrl === null &&
+        logoUrl === null
+    ) {
+        throw new TitanBotError(
+            'No team edit fields provided',
+            ErrorTypes.USER_INPUT,
+            'You must provide at least one field to update.',
+        );
+    }
+
+    const team = await TeamService.update({
+        guildId: interaction.guildId,
+        teamId,
+        name:
+            name ?? undefined,
+        tag:
+            tag ?? undefined,
+        managerId:
+            manager?.id ?? undefined,
+        roleId:
+            role?.id ?? undefined,
+        discordUrl:
+            discordUrl ?? undefined,
+        logoUrl:
+            logoUrl ?? undefined,
+    });
+
+    await InteractionHelper.safeEditReply(
+        interaction,
+        {
+            content: [
+                '✅ **Team updated successfully**',
+                '',
+                `**Team:** ${team.name}${
+                    team.tag
+                        ? ` [${team.tag}]`
+                        : ''
+                }`,
+                `**Team ID:** \`${team.id}\``,
+                `**Team Manager:** <@${team.manager_id}>`,
+                team.role_id
+                    ? `**Team Role:** <@&${team.role_id}>`
+                    : '**Team Role:** None',
+            ].join('\n'),
+        },
+    );
+}
+
+/**
  * Handles /team invite.
  */
 async function handleInvite(interaction) {
@@ -451,6 +544,65 @@ export default {
 
         .addSubcommand((subcommand) =>
             subcommand
+                .setName('edit')
+                .setDescription(
+                    'Edit an existing HCD competitive team',
+                )
+                .addIntegerOption((option) =>
+                    option
+                        .setName('team')
+                        .setDescription('Team ID')
+                        .setRequired(true)
+                        .setMinValue(1),
+                )
+                .addStringOption((option) =>
+                    option
+                        .setName('name')
+                        .setDescription(
+                            'New team name',
+                        )
+                        .setMaxLength(100),
+                )
+                .addStringOption((option) =>
+                    option
+                        .setName('tag')
+                        .setDescription(
+                            'New team tag',
+                        )
+                        .setMaxLength(20),
+                )
+                .addUserOption((option) =>
+                    option
+                        .setName('manager')
+                        .setDescription(
+                            'New Team Manager',
+                        ),
+                )
+                .addRoleOption((option) =>
+                    option
+                        .setName('role')
+                        .setDescription(
+                            'Discord role assigned to the team',
+                        ),
+                )
+                .addStringOption((option) =>
+                    option
+                        .setName('discord')
+                        .setDescription(
+                            'Faction Discord invite URL',
+                        ),
+                )
+                .addStringOption((option) =>
+                    option
+                        .setName('logo')
+                        .setDescription(
+                            'Team logo image URL',
+                        ),
+                ),
+        )
+
+        .addSubcommand((subcommand) =>
+            subcommand
                 .setName('invite')
                 .setDescription(
                     'Invite a player to a team',
@@ -612,6 +764,10 @@ export default {
         switch (subcommand) {
             case 'create':
                 await handleCreate(interaction);
+                break;
+
+            case 'edit':
+                await handleEdit(interaction);
                 break;
 
             case 'invite':
