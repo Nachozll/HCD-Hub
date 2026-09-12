@@ -1,6 +1,5 @@
 import {
     SlashCommandBuilder,
-    PermissionFlagsBits,
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
@@ -31,8 +30,15 @@ const POSITION_NAMES = Object.freeze({
  * Later this can be replaced/extended with HCD-specific Staff roles.
  */
 function isHcdStaff(interaction) {
-    return interaction.memberPermissions?.has(
-        PermissionFlagsBits.ManageGuild,
+    const teamAdminRoleId =
+        process.env.HCD_TEAM_ADMIN_ROLE_ID;
+
+    if (!teamAdminRoleId) {
+        return false;
+    }
+
+    return interaction.member?.roles?.cache?.has(
+        teamAdminRoleId,
     ) ?? false;
 }
 
