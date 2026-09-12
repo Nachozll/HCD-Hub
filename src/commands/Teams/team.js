@@ -861,7 +861,7 @@ export default {
         ),
 
     category: 'teams',
-
+async execute(interaction, config, client) {
    const deferSuccess =
     await InteractionHelper.safeDefer(
         interaction,
