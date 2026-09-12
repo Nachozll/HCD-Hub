@@ -862,11 +862,13 @@ export default {
 
     category: 'teams',
 
-    async execute(interaction, config, client) {
-        const deferSuccess =
-            await InteractionHelper.safeDefer(
-                interaction,
-            );
+   const deferSuccess =
+    await InteractionHelper.safeDefer(
+        interaction,
+        {
+            ephemeral: true,
+        },
+    );
 
         if (!deferSuccess) {
             logger.warn(
