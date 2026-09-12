@@ -33,13 +33,34 @@ function isHcdStaff(interaction) {
     const teamAdminRoleId =
         process.env.HCD_TEAM_ADMIN_ROLE_ID;
 
-    if (!teamAdminRoleId) {
-        return false;
-    }
+    const coachLeaderRoleId =
+        process.env.HCD_COACH_LEADER_ROLE_ID;
 
-    return interaction.member?.roles?.cache?.has(
-        teamAdminRoleId,
-    ) ?? false;
+    const ownerIds = (process.env.OWNER_IDS || '')
+        .split(',')
+        .map(id => id.trim())
+        .filter(Boolean);
+
+    const isOwner =
+        ownerIds.includes(interaction.user.id);
+
+    const isAdministrator =
+        teamAdminRoleId &&
+        (interaction.member?.roles?.cache?.has(
+            teamAdminRoleId,
+        ) ?? false);
+
+    const isCoachLeader =
+        coachLeaderRoleId &&
+        (interaction.member?.roles?.cache?.has(
+            coachLeaderRoleId,
+        ) ?? false);
+
+    return (
+        isOwner ||
+        isAdministrator ||
+        isCoachLeader
+    );
 }
 
 /**
