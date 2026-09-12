@@ -18,9 +18,9 @@ import {
 } from '../../utils/errorHandler.js';
 
 const POSITION_NAMES = Object.freeze({
-    captain: 'Captain',
+    captain: 'Capitán',
     main: 'Main Roster',
-    sub: 'Substitute Roster',
+    sub: 'Sub Roster',
 });
 
 /**
@@ -106,7 +106,7 @@ async function handleCreate(interaction) {
         throw new TitanBotError(
             'Bot cannot manage team',
             ErrorTypes.USER_INPUT,
-            'A bot cannot be assigned as Team Manager.',
+            'A bot cannot be assigned as Líder de Facción.',
         );
     }
 
@@ -130,7 +130,7 @@ async function handleCreate(interaction) {
                 team.tag
                     ? `**Tag:** ${team.tag}`
                     : null,
-                `**Team Manager:** <@${team.manager_id}>`,
+                `**Líder de Facción:** <@${team.manager_id}>`,
                 `**Team ID:** \`${team.id}\``,
                 team.role_id
                     ? `**Team Role:** <@&${team.role_id}>`
@@ -178,7 +178,7 @@ async function handleEdit(interaction) {
         throw new TitanBotError(
             'Bot cannot manage team',
             ErrorTypes.USER_INPUT,
-            'A bot cannot be assigned as Team Manager.',
+            'A bot cannot be assigned as Líder de Facción.',
         );
     }
 
@@ -226,7 +226,7 @@ async function handleEdit(interaction) {
                         : ''
                 }`,
                 `**Team ID:** \`${team.id}\``,
-                `**Team Manager:** <@${team.manager_id}>`,
+                `**Líder de Facción:** <@${team.manager_id}>`,
                 team.role_id
                     ? `**Team Role:** <@&${team.role_id}>`
                     : '**Team Role:** None',
@@ -561,16 +561,16 @@ async function handleRoster(interaction) {
     const content = [
         `## ${team.name}${team.tag ? ` [${team.tag}]` : ''}`,
         '',
-        `**Team Manager:** <@${team.manager_id}>`,
+        `**Líder de Facción:** <@${team.manager_id}>`,
         `**Players:** ${counts.total}/9`,
         '',
-        `### Captains — ${counts.captain}/${TEAM_LIMITS.captain}`,
+        `### Capitanes — ${counts.captain}/${TEAM_LIMITS.captain}`,
         formatRosterSection(captains),
         '',
         `### Main Roster — ${counts.main}/${TEAM_LIMITS.main}`,
         formatRosterSection(mains),
         '',
-        `### Substitute Roster — ${counts.sub}/${TEAM_LIMITS.sub}`,
+        `### Sub Roster — ${counts.sub}/${TEAM_LIMITS.sub}`,
         formatRosterSection(substitutes),
     ];
 
@@ -611,7 +611,7 @@ export default {
                     option
                         .setName('manager')
                         .setDescription(
-                            'Team Manager / faction leader',
+                            'Líder de Facción',
                         )
                         .setRequired(true),
                 )
@@ -679,7 +679,7 @@ export default {
                     option
                         .setName('manager')
                         .setDescription(
-                            'New Team Manager',
+                            'Nuevo Líder de Facción',
                         ),
                 )
                 .addRoleOption((option) =>
@@ -735,7 +735,7 @@ export default {
                         .setRequired(true)
                         .addChoices(
                             {
-                                name: 'Captain',
+                                name: 'Capitán',
                                 value: 'captain',
                             },
                             {
@@ -743,7 +743,7 @@ export default {
                                 value: 'main',
                             },
                             {
-                                name: 'Substitute Roster',
+                                name: 'Sub Roster',
                                 value: 'sub',
                             },
                         ),
@@ -803,7 +803,7 @@ export default {
                         .setRequired(true)
                         .addChoices(
                             {
-                                name: 'Captain',
+                                name: 'Capitán',
                                 value: 'captain',
                             },
                             {
@@ -811,7 +811,7 @@ export default {
                                 value: 'main',
                             },
                             {
-                                name: 'Substitute Roster',
+                                name: 'Sub Roster',
                                 value: 'sub',
                             },
                         ),
