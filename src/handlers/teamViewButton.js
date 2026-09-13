@@ -56,8 +56,10 @@ export const teamViewHandler = {
                 },
             )
             .setFooter({
-                text: `HCD • ${counts.total}/9 jugadores`,
-            });
+                .setFooter({
+                text: `Roster system inspired by the BRM5 Competitive Hub • Adapted for HCD • ${counts.total}/9 jugadores`,
+            })
+            .setTimestamp();
 
         if (team.logo_url) {
             embed.setThumbnail(team.logo_url);
