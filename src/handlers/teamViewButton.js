@@ -71,7 +71,10 @@ export const teamViewHandler = {
         });
 
         embed.setTimestamp(new Date());
-                console.log(JSON.stringify(embed.toJSON(), null, 2));
+                        console.log('HCD TEAM VIEW DEBUG:', {
+            footer: embed.data.footer,
+            timestamp: embed.data.timestamp,
+        });
         await interaction.reply({
             embeds: [embed],
             ephemeral: true,
