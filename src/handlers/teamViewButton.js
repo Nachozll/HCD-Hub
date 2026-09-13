@@ -71,6 +71,7 @@ export const teamViewHandler = {
         });
 
         embed.setTimestamp(new Date());
+                console.log(JSON.stringify(embed.toJSON(), null, 2));
         await interaction.reply({
             embeds: [embed],
             ephemeral: true,
