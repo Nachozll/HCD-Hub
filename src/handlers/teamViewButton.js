@@ -75,9 +75,11 @@ export const teamViewHandler = {
 
         embed.setTimestamp(new Date());
 
-        console.log('DEBUG B: después del footer', {
-            footer: embed.data.footer,
-            timestamp: embed.data.timestamp,
+        const embedJson = embed.toJSON();
+
+        console.log('DEBUG B:', {
+            footer: embedJson.footer,
+            timestamp: embedJson.timestamp,
         });
 
         await interaction.reply({
