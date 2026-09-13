@@ -629,6 +629,18 @@ async function handlePanel(interaction) {
         );
     }
 
+    const teams = await TeamService.getTeams(
+        interaction.guildId,
+    );
+
+    if (!teams.length) {
+        throw new TitanBotError(
+            'No active HCD teams',
+            ErrorTypes.VALIDATION,
+            'There are no active HCD teams to display.',
+        );
+    }
+
     const embed = new EmbedBuilder()
         .setColor('#C9A227')
         .setTitle('HCD | EQUIPOS')
@@ -640,17 +652,32 @@ async function handlePanel(interaction) {
             ].join('\n'),
         );
 
-    const testButton = new ButtonBuilder()
-        .setCustomId('team_view:1')
-        .setLabel('TEST | test team')
-        .setStyle(ButtonStyle.Secondary);
+    const rows = [];
 
-    const row = new ActionRowBuilder()
-        .addComponents(testButton);
+    for (let i = 0; i < teams.length; i += 5) {
+        const row = new ActionRowBuilder();
+
+        const group = teams.slice(i, i + 5);
+
+        for (const team of group) {
+            const label = team.tag
+                ? `${team.tag} | ${team.name}`
+                : team.name;
+
+            row.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`team_view:${team.id}`)
+                    .setLabel(label.slice(0, 80))
+                    .setStyle(ButtonStyle.Secondary),
+            );
+        }
+
+        rows.push(row);
+    }
 
     await interaction.channel.send({
         embeds: [embed],
-        components: [row],
+        components: rows,
     });
 
     await InteractionHelper.safeEditReply(
@@ -660,6 +687,7 @@ async function handlePanel(interaction) {
         },
     );
 }
+
 export default {
     data: new SlashCommandBuilder()
         .setName('team')
