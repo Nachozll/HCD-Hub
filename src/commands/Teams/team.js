@@ -3,6 +3,7 @@ import {
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
+    EmbedBuilder,
 } from 'discord.js';
 
 import TeamService, {
@@ -615,7 +616,50 @@ async function handleRoster(interaction) {
         },
     );
 }
+/**
+ * Handles /team panel.
+ * Publishes the public HCD teams panel.
+ */
+async function handlePanel(interaction) {
+    if (!isHcdStaff(interaction)) {
+        throw new TitanBotError(
+            'Missing team panel permission',
+            ErrorTypes.PERMISSION,
+            'Only HCD Staff can publish the teams panel.',
+        );
+    }
 
+    const embed = new EmbedBuilder()
+        .setColor('#C9A227')
+        .setTitle('HCD | EQUIPOS')
+        .setDescription(
+            [
+                'Este canal reúne a los equipos oficialmente registrados en Hispanic Competitive Development, que posteriormente competirán dentro del Competitive Hub.',
+                '',
+                'Selecciona un equipo para consultar su **Líder de Facción, Capitanes, Main Roster, Sub Roster** y acceder a su **servidor oficial**.',
+            ].join('\n'),
+        );
+
+    const testButton = new ButtonBuilder()
+        .setCustomId('team_view:1')
+        .setLabel('TEST | test team')
+        .setStyle(ButtonStyle.Secondary);
+
+    const row = new ActionRowBuilder()
+        .addComponents(testButton);
+
+    await interaction.channel.send({
+        embeds: [embed],
+        components: [row],
+    });
+
+    await InteractionHelper.safeEditReply(
+        interaction,
+        {
+            content: '✅ **Teams panel published successfully**',
+        },
+    );
+}
 export default {
     data: new SlashCommandBuilder()
         .setName('team')
@@ -860,6 +904,14 @@ export default {
                 ),
         ),
 
+        .addSubcommand((subcommand) =>
+            subcommand
+                .setName('panel')
+                .setDescription(
+                    'Publish the HCD teams panel',
+                ),
+        ),
+
     category: 'teams',
 async execute(interaction, config, client) {
    const deferSuccess =
@@ -915,8 +967,12 @@ async execute(interaction, config, client) {
                 await handleMove(interaction);
                 break;
 
-            case 'roster':
+                       case 'roster':
                 await handleRoster(interaction);
+                break;
+
+            case 'panel':
+                await handlePanel(interaction);
                 break;
 
             default:
