@@ -902,7 +902,7 @@ export default {
                         .setRequired(true)
                         .setMinValue(1),
                 ),
-        ),
+        )
 
         .addSubcommand((subcommand) =>
             subcommand
