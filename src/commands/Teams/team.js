@@ -652,6 +652,13 @@ async function handlePanel(interaction) {
             ].join('\n'),
         );
 
+    const teamsBannerUrl =
+        process.env.HCD_TEAMS_BANNER_URL;
+
+    if (teamsBannerUrl) {
+        embed.setImage(teamsBannerUrl);
+    }
+
     const rows = [];
 
     for (let i = 0; i < teams.length; i += 5) {
