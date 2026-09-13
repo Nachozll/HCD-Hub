@@ -1,4 +1,3 @@
-import { EmbedBuilder } from 'discord.js';
 import TeamService, {
     TEAM_LIMITS,
 } from '../services/teamService.js';
@@ -32,55 +31,51 @@ export const teamViewHandler = {
             counts,
         } = roster;
 
-        const embed = new EmbedBuilder()
-            .setColor('#C9A227')
-            .setTitle(
-                `${team.name}${team.tag ? ` [${team.tag}]` : ''}`,
-            )
-            .addFields(
-                {
-                    name: 'Líder de Facción',
-                    value: `<@${team.manager_id}>`,
-                },
-                {
-                    name: `Capitanes — ${counts.captain}/${TEAM_LIMITS.captain}`,
-                    value: formatRosterSection(captains),
-                },
-                {
-                    name: `Main Roster — ${counts.main}/${TEAM_LIMITS.main}`,
-                    value: formatRosterSection(mains),
-                },
-                {
-                    name: `Sub Roster — ${counts.sub}/${TEAM_LIMITS.sub}`,
-                    value: formatRosterSection(substitutes),
-                },
-            );
-
-        if (team.logo_url) {
-            embed.setThumbnail(team.logo_url);
-        }
+        const fields = [
+            {
+                name: 'Líder de Facción',
+                value: `<@${team.manager_id}>`,
+            },
+            {
+                name: `Capitanes — ${counts.captain}/${TEAM_LIMITS.captain}`,
+                value: formatRosterSection(captains),
+            },
+            {
+                name: `Main Roster — ${counts.main}/${TEAM_LIMITS.main}`,
+                value: formatRosterSection(mains),
+            },
+            {
+                name: `Sub Roster — ${counts.sub}/${TEAM_LIMITS.sub}`,
+                value: formatRosterSection(substitutes),
+            },
+        ];
 
         if (team.discord_url) {
-            embed.addFields({
+            fields.push({
                 name: 'Servidor oficial',
                 value: team.discord_url,
             });
         }
 
-        console.log('DEBUG A: antes del footer');
+        const embed = {
+            color: 0xC9A227,
 
-        embed.setFooter({
-            text: `Roster system inspired by the BRM5 Competitive Hub • Adapted for HCD • ${counts.total}/9 jugadores`,
-        });
+            title: `${team.name}${team.tag ? ` [${team.tag}]` : ''}`,
 
-        embed.setTimestamp(new Date());
+            fields,
 
-        const embedJson = embed.toJSON();
+            footer: {
+                text: `Roster system inspired by the BRM5 Competitive Hub • Adapted for HCD • ${counts.total}/9 jugadores`,
+            },
 
-        console.log('DEBUG B:', {
-            footer: embedJson.footer,
-            timestamp: embedJson.timestamp,
-        });
+            timestamp: new Date().toISOString(),
+        };
+
+        if (team.logo_url) {
+            embed.thumbnail = {
+                url: team.logo_url,
+            };
+        }
 
         await interaction.reply({
             embeds: [embed],
