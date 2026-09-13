@@ -61,6 +61,7 @@ export async function createTeam({
     roleId = null,
     discordUrl = null,
     logoUrl = null,
+    buttonEmoji = null,
 }) {
     ensureDatabaseAvailable();
 
@@ -73,9 +74,10 @@ export async function createTeam({
                 manager_id,
                 role_id,
                 discord_url,
-                logo_url
+                logo_url,
+                button_emoji
             )
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING *`,
         [
             guildId,
@@ -85,6 +87,7 @@ export async function createTeam({
             roleId,
             discordUrl,
             logoUrl,
+            buttonEmoji,
         ],
     );
 
@@ -159,6 +162,7 @@ export async function updateTeam(guildId, teamId, updates = {}) {
         roleId: 'role_id',
         discordUrl: 'discord_url',
         logoUrl: 'logo_url',
+        buttonEmoji: 'button_emoji',
         active: 'active',
     };
 
