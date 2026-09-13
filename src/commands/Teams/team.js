@@ -65,6 +65,33 @@ function isHcdStaff(interaction) {
 }
 
 /**
+ * Returns whether the interaction member can administratively edit
+ * the identity/settings of any HCD team.
+ *
+ * Only Owner + Administrador. Coach Leader is intentionally excluded.
+ */
+function isHcdTeamIdentityAdmin(interaction) {
+    const teamAdminRoleId =
+        process.env.HCD_TEAM_ADMIN_ROLE_ID;
+
+    const ownerIds = (process.env.OWNER_IDS || '')
+        .split(',')
+        .map(id => id.trim())
+        .filter(Boolean);
+
+    const isOwner =
+        ownerIds.includes(interaction.user.id);
+
+    const isAdministrator =
+        teamAdminRoleId &&
+        (interaction.member?.roles?.cache?.has(
+            teamAdminRoleId,
+        ) ?? false);
+
+    return isOwner || isAdministrator;
+}
+
+/**
  * Converts a database team ID to an integer.
  */
 function getTeamId(interaction) {
@@ -130,6 +157,9 @@ async function handleCreate(interaction) {
     const logoUrl =
         interaction.options.getString('logo');
 
+    const buttonEmoji =
+        interaction.options.getString('emoji');
+
     if (manager.bot) {
         throw new TitanBotError(
             'Bot cannot manage team',
@@ -146,6 +176,7 @@ async function handleCreate(interaction) {
         roleId: role?.id ?? null,
         discordUrl,
         logoUrl,
+        buttonEmoji,
     });
 
     await InteractionHelper.safeEditReply(
@@ -174,15 +205,26 @@ async function handleCreate(interaction) {
  * Handles /team edit.
  */
 async function handleEdit(interaction) {
-    if (!isHcdStaff(interaction)) {
+    const teamId = getTeamId(interaction);
+
+    const currentTeam = await TeamService.get(
+        interaction.guildId,
+        teamId,
+    );
+
+    const isIdentityAdmin =
+        isHcdTeamIdentityAdmin(interaction);
+
+    const isFactionLeader =
+        currentTeam.manager_id === interaction.user.id;
+
+    if (!isIdentityAdmin && !isFactionLeader) {
         throw new TitanBotError(
             'Missing team edit permission',
             ErrorTypes.PERMISSION,
-            'Only HCD Staff can edit teams.',
+            'Only the Líder de Facción, an HCD Administrator, or the Owner can edit this team.',
         );
     }
-
-    const teamId = getTeamId(interaction);
 
     const name =
         interaction.options.getString('name');
@@ -202,11 +244,25 @@ async function handleEdit(interaction) {
     const logoUrl =
         interaction.options.getString('logo');
 
+    const buttonEmoji =
+        interaction.options.getString('emoji');
+
     if (manager?.bot) {
         throw new TitanBotError(
             'Bot cannot manage team',
             ErrorTypes.USER_INPUT,
             'A bot cannot be assigned as Líder de Facción.',
+        );
+    }
+
+    // Only Owner + Administrador may transfer leadership or change
+    // the Discord team role. The Líder de Facción can edit only
+    // the public identity of their own team.
+    if (!isIdentityAdmin && (manager !== null || role !== null)) {
+        throw new TitanBotError(
+            'Restricted team administration field',
+            ErrorTypes.PERMISSION,
+            'Only an HCD Administrator or the Owner can change the Líder de Facción or Team Role.',
         );
     }
 
@@ -216,7 +272,8 @@ async function handleEdit(interaction) {
         manager === null &&
         role === null &&
         discordUrl === null &&
-        logoUrl === null
+        logoUrl === null &&
+        buttonEmoji === null
     ) {
         throw new TitanBotError(
             'No team edit fields provided',
@@ -240,6 +297,8 @@ async function handleEdit(interaction) {
             discordUrl ?? undefined,
         logoUrl:
             logoUrl ?? undefined,
+        buttonEmoji:
+            buttonEmoji ?? undefined,
     });
 
     await InteractionHelper.safeEditReply(
@@ -258,7 +317,12 @@ async function handleEdit(interaction) {
                 team.role_id
                     ? `**Team Role:** <@&${team.role_id}>`
                     : '**Team Role:** None',
-            ].join('\n'),
+                team.button_emoji
+                    ? `**Button Emoji:** ${team.button_emoji}`
+                    : null,
+            ]
+                .filter(Boolean)
+                .join('\n'),
         },
     );
 }
@@ -671,12 +735,16 @@ async function handlePanel(interaction) {
                 ? `${team.tag} | ${team.name}`
                 : team.name;
 
-            row.addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`team_view:${team.id}`)
-                    .setLabel(label.slice(0, 80))
-                    .setStyle(ButtonStyle.Secondary),
-            );
+            const button = new ButtonBuilder()
+                .setCustomId(`team_view:${team.id}`)
+                .setLabel(label.slice(0, 80))
+                .setStyle(ButtonStyle.Secondary);
+
+            if (team.button_emoji) {
+                button.setEmoji(team.button_emoji);
+            }
+
+            row.addComponents(button);
         }
 
         rows.push(row);
@@ -749,6 +817,13 @@ export default {
                         .setDescription(
                             'Team logo image URL',
                         ),
+                )
+                .addStringOption((option) =>
+                    option
+                        .setName('emoji')
+                        .setDescription(
+                            'Emoji displayed on the team panel button',
+                        ),
                 ),
         )
 
@@ -807,6 +882,13 @@ export default {
                         .setName('logo')
                         .setDescription(
                             'Team logo image URL',
+                        ),
+                )
+                .addStringOption((option) =>
+                    option
+                        .setName('emoji')
+                        .setDescription(
+                            'Emoji displayed on the team panel button',
                         ),
                 ),
         )
