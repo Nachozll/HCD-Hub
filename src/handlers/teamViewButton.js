@@ -33,27 +33,27 @@ export const teamViewHandler = {
 
         const fields = [
             {
-                name: 'Líder de Facción',
+                name: '👑 Líder de Facción',
                 value: `<@${team.manager_id}>`,
             },
             {
-                name: `Capitanes — ${counts.captain}/${TEAM_LIMITS.captain}`,
+                name: `⚔️ Capitanes — ${counts.captain}/${TEAM_LIMITS.captain}`,
                 value: formatRosterSection(captains),
             },
             {
-                name: `Main Roster — ${counts.main}/${TEAM_LIMITS.main}`,
+                name: `🎯 Main Roster — ${counts.main}/${TEAM_LIMITS.main}`,
                 value: formatRosterSection(mains),
             },
             {
-                name: `Sub Roster — ${counts.sub}/${TEAM_LIMITS.sub}`,
+                name: `🔄 Sub Roster — ${counts.sub}/${TEAM_LIMITS.sub}`,
                 value: formatRosterSection(substitutes),
             },
         ];
 
         if (team.discord_url) {
             fields.push({
-                name: 'Servidor oficial',
-                value: team.discord_url,
+                name: '🔗 Discord oficial',
+                value: `[Click Here](${team.discord_url})`,
             });
         }
 
@@ -62,10 +62,14 @@ export const teamViewHandler = {
 
             title: `${team.name}${team.tag ? ` [${team.tag}]` : ''}`,
 
+            description:
+                `**Roster competitivo oficial**\n` +
+                `${counts.total}/9 jugadores registrados`,
+
             fields,
 
             footer: {
-                text: `Roster system inspired by the BRM5 Competitive Hub • Adapted for HCD • ${counts.total}/9 jugadores`,
+                text: 'Roster system inspired by the BRM5 Competitive Hub • Adapted for HCD',
             },
 
             timestamp: new Date().toISOString(),
