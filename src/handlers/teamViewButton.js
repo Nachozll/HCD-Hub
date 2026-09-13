@@ -55,7 +55,6 @@ export const teamViewHandler = {
                     value: formatRosterSection(substitutes),
                 },
             )
-            .setFooter({
                 .setFooter({
                 text: `Roster system inspired by the BRM5 Competitive Hub • Adapted for HCD • ${counts.total}/9 jugadores`,
             })
