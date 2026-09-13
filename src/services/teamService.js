@@ -445,6 +445,7 @@ class TeamService {
                 roleId: data.roleId || null,
                 discordUrl: data.discordUrl || null,
                 logoUrl: data.logoUrl || null,
+                buttonEmoji: data.buttonEmoji || null,
             });
 
             logger.info('HCD team created', {
@@ -482,6 +483,7 @@ static async update({
     roleId = undefined,
     discordUrl = undefined,
     logoUrl = undefined,
+    buttonEmoji = undefined,
 }) {
     try {
         const team = await this.get(
@@ -561,6 +563,11 @@ static async update({
         if (logoUrl !== undefined) {
             updates.logoUrl =
                 logoUrl || null;
+        }
+
+        if (buttonEmoji !== undefined) {
+            updates.buttonEmoji =
+                buttonEmoji || null;
         }
 
         if (!Object.keys(updates).length) {
