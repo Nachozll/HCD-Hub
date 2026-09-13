@@ -92,6 +92,144 @@ function isHcdTeamIdentityAdmin(interaction) {
 }
 
 /**
+ * Builds a safe Discord emoji name for an HCD team logo.
+ */
+function buildTeamEmojiName(name, tag = null) {
+    const source = (tag || name || 'team')
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9_]/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .toLowerCase();
+
+    const base = source || 'team';
+    const suffix = Date.now().toString().slice(-5);
+
+    return `hcdteam_${base}_${suffix}`.slice(0, 32);
+}
+
+/**
+ * Creates the custom Discord emoji used by a team's panel button.
+ * The same emoji CDN image is also used as the roster thumbnail.
+ */
+async function createTeamLogoEmoji({
+    interaction,
+    attachment,
+    teamName,
+    teamTag = null,
+}) {
+    if (!attachment) {
+        return null;
+    }
+
+    const isImage =
+        attachment.contentType?.startsWith('image/');
+
+    if (!isImage) {
+        throw new TitanBotError(
+            'Invalid team logo attachment',
+            ErrorTypes.USER_INPUT,
+            'The team logo must be an image file.',
+        );
+    }
+
+    // Discord's guild emoji endpoint accepts images up to 256 KiB.
+    if (attachment.size > 256 * 1024) {
+        throw new TitanBotError(
+            'Team logo is too large for a Discord emoji',
+            ErrorTypes.USER_INPUT,
+            'The team logo must be smaller than 256 KB so HCD Hub can create the button emoji automatically.',
+        );
+    }
+
+    let emoji;
+
+    try {
+        emoji = await interaction.guild.emojis.create({
+            attachment: attachment.url,
+            name: buildTeamEmojiName(
+                teamName,
+                teamTag,
+            ),
+            reason:
+                `HCD team logo configured by ${interaction.user.tag}`,
+        });
+    } catch (error) {
+        logger.error(
+            'Failed to create HCD team logo emoji',
+            {
+                guildId: interaction.guildId,
+                userId: interaction.user.id,
+                fileName: attachment.name,
+                fileSize: attachment.size,
+                error: error.message,
+            },
+        );
+
+        throw new TitanBotError(
+            'Failed to create team logo emoji',
+            ErrorTypes.VALIDATION,
+            'HCD Hub could not create the team logo emoji. Make sure the image is valid, under 256 KB, and that the bot has permission to Create Expressions.',
+        );
+    }
+
+    return {
+        emoji,
+        buttonEmoji: emoji.id,
+        logoUrl: emoji.imageURL({
+            size: 256,
+        }),
+    };
+}
+
+/**
+ * Removes an older HCD Hub-created team emoji after a successful
+ * replacement. Manually created emojis are intentionally preserved.
+ */
+async function cleanupOldTeamEmoji(
+    interaction,
+    emojiId,
+) {
+    if (!emojiId) {
+        return;
+    }
+
+    try {
+        let emoji =
+            interaction.guild.emojis.cache.get(emojiId);
+
+        if (!emoji) {
+            try {
+                emoji =
+                    await interaction.guild.emojis.fetch(
+                        emojiId,
+                    );
+            } catch {
+                return;
+            }
+        }
+
+        if (!emoji?.name?.startsWith('hcdteam_')) {
+            return;
+        }
+
+        await emoji.delete(
+            `Replaced HCD team logo by ${interaction.user.tag}`,
+        );
+    } catch (error) {
+        logger.warn(
+            'Failed to clean up previous HCD team logo emoji',
+            {
+                guildId: interaction.guildId,
+                emojiId,
+                error: error.message,
+            },
+        );
+    }
+}
+
+/**
  * Converts a database team ID to an integer.
  */
 function getTeamId(interaction) {
@@ -154,11 +292,8 @@ async function handleCreate(interaction) {
     const discordUrl =
         interaction.options.getString('discord');
 
-    const logoUrl =
-        interaction.options.getString('logo');
-
-    const buttonEmoji =
-        interaction.options.getString('emoji');
+    const logoAttachment =
+        interaction.options.getAttachment('logo');
 
     if (manager.bot) {
         throw new TitanBotError(
@@ -168,16 +303,42 @@ async function handleCreate(interaction) {
         );
     }
 
-    const team = await TeamService.create({
-        guildId: interaction.guildId,
-        name,
-        tag,
-        managerId: manager.id,
-        roleId: role?.id ?? null,
-        discordUrl,
-        logoUrl,
-        buttonEmoji,
-    });
+    const logoResult =
+        await createTeamLogoEmoji({
+            interaction,
+            attachment: logoAttachment,
+            teamName: name,
+            teamTag: tag,
+        });
+
+    let team;
+
+    try {
+        team = await TeamService.create({
+            guildId: interaction.guildId,
+            name,
+            tag,
+            managerId: manager.id,
+            roleId: role?.id ?? null,
+            discordUrl,
+            logoUrl:
+                logoResult?.logoUrl ?? null,
+            buttonEmoji:
+                logoResult?.buttonEmoji ?? null,
+        });
+    } catch (error) {
+        if (logoResult?.emoji) {
+            try {
+                await logoResult.emoji.delete(
+                    'HCD team creation failed',
+                );
+            } catch {
+                // Best-effort cleanup only.
+            }
+        }
+
+        throw error;
+    }
 
     await InteractionHelper.safeEditReply(
         interaction,
@@ -241,11 +402,8 @@ async function handleEdit(interaction) {
     const discordUrl =
         interaction.options.getString('discord');
 
-    const logoUrl =
-        interaction.options.getString('logo');
-
-    const buttonEmoji =
-        interaction.options.getString('emoji');
+    const logoAttachment =
+        interaction.options.getAttachment('logo');
 
     if (manager?.bot) {
         throw new TitanBotError(
@@ -272,8 +430,7 @@ async function handleEdit(interaction) {
         manager === null &&
         role === null &&
         discordUrl === null &&
-        logoUrl === null &&
-        buttonEmoji === null
+        logoAttachment === null
     ) {
         throw new TitanBotError(
             'No team edit fields provided',
@@ -282,24 +439,62 @@ async function handleEdit(interaction) {
         );
     }
 
-    const team = await TeamService.update({
-        guildId: interaction.guildId,
-        teamId,
-        name:
-            name ?? undefined,
-        tag:
-            tag ?? undefined,
-        managerId:
-            manager?.id ?? undefined,
-        roleId:
-            role?.id ?? undefined,
-        discordUrl:
-            discordUrl ?? undefined,
-        logoUrl:
-            logoUrl ?? undefined,
-        buttonEmoji:
-            buttonEmoji ?? undefined,
-    });
+    const logoResult =
+        await createTeamLogoEmoji({
+            interaction,
+            attachment: logoAttachment,
+            teamName:
+                name ?? currentTeam.name,
+            teamTag:
+                tag ?? currentTeam.tag,
+        });
+
+    let team;
+
+    try {
+        team = await TeamService.update({
+            guildId: interaction.guildId,
+            teamId,
+            name:
+                name ?? undefined,
+            tag:
+                tag ?? undefined,
+            managerId:
+                manager?.id ?? undefined,
+            roleId:
+                role?.id ?? undefined,
+            discordUrl:
+                discordUrl ?? undefined,
+            logoUrl:
+                logoResult?.logoUrl ?? undefined,
+            buttonEmoji:
+                logoResult?.buttonEmoji ?? undefined,
+        });
+    } catch (error) {
+        if (logoResult?.emoji) {
+            try {
+                await logoResult.emoji.delete(
+                    'HCD team update failed',
+                );
+            } catch {
+                // Best-effort cleanup only.
+            }
+        }
+
+        throw error;
+    }
+
+    if (
+        logoResult?.buttonEmoji &&
+        currentTeam.button_emoji &&
+        currentTeam.button_emoji !==
+            logoResult.buttonEmoji
+    ) {
+        await cleanupOldTeamEmoji(
+            interaction,
+            currentTeam.button_emoji,
+        );
+    }
 
     await InteractionHelper.safeEditReply(
         interaction,
@@ -811,18 +1006,11 @@ export default {
                             'Faction Discord invite URL',
                         ),
                 )
-                .addStringOption((option) =>
+                .addAttachmentOption((option) =>
                     option
                         .setName('logo')
                         .setDescription(
-                            'Team logo image URL',
-                        ),
-                )
-                .addStringOption((option) =>
-                    option
-                        .setName('emoji')
-                        .setDescription(
-                            'Emoji displayed on the team panel button',
+                            'Upload the team logo (also used for the panel button)',
                         ),
                 ),
         )
@@ -877,18 +1065,11 @@ export default {
                             'Faction Discord invite URL',
                         ),
                 )
-                .addStringOption((option) =>
+                .addAttachmentOption((option) =>
                     option
                         .setName('logo')
                         .setDescription(
-                            'Team logo image URL',
-                        ),
-                )
-                .addStringOption((option) =>
-                    option
-                        .setName('emoji')
-                        .setDescription(
-                            'Emoji displayed on the team panel button',
+                            'Upload the team logo (also used for the panel button)',
                         ),
                 ),
         )
