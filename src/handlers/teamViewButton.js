@@ -50,16 +50,12 @@ export const teamViewHandler = {
                     name: `Main Roster — ${counts.main}/${TEAM_LIMITS.main}`,
                     value: formatRosterSection(mains),
                 },
-                {
+                                {
                     name: `Sub Roster — ${counts.sub}/${TEAM_LIMITS.sub}`,
                     value: formatRosterSection(substitutes),
                 },
-            )
-                .setFooter({
-                text: `Roster system inspired by the BRM5 Competitive Hub • Adapted for HCD • ${counts.total}/9 jugadores`,
-            })
-            .setTimestamp();
-
+            );
+                
         if (team.logo_url) {
             embed.setThumbnail(team.logo_url);
         }
@@ -70,7 +66,11 @@ export const teamViewHandler = {
                 value: team.discord_url,
             });
         }
+        embed.setFooter({
+            text: `Roster system inspired by the BRM5 Competitive Hub • Adapted for HCD • ${counts.total}/9 jugadores`,
+        });
 
+        embed.setTimestamp(new Date());
         await interaction.reply({
             embeds: [embed],
             ephemeral: true,
