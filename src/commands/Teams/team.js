@@ -4,6 +4,7 @@ import {
     ButtonBuilder,
     ButtonStyle,
     EmbedBuilder,
+    PermissionsBitField,
 } from 'discord.js';
 
 import TeamService, {
@@ -298,6 +299,257 @@ async function refreshTeamsPanelSafely(interaction) {
 }
 
 /**
+ * Formats the faction leader for team responses.
+ */
+function formatFactionLeader(managerId) {
+    return managerId
+        ? `<@${managerId}>`
+        : 'Sin Líder de Facción';
+}
+
+/**
+ * Returns the Discord role name managed by HCD Hub for a team.
+ * The tag is preferred to keep member profiles clean.
+ */
+function getManagedTeamRoleName(name, tag = null) {
+    const roleName = String(tag || name || '').trim();
+
+    if (!roleName) {
+        throw new TitanBotError(
+            'Invalid HCD team role name',
+            ErrorTypes.USER_INPUT,
+            'The team must have a valid name or tag so HCD Hub can create its Discord role.',
+        );
+    }
+
+    return roleName.slice(0, 100);
+}
+
+/**
+ * Resolves the permanent Equipos separator role configured in Railway.
+ */
+async function getTeamsSeparatorRole(interaction) {
+    const separatorRoleId =
+        process.env.HCD_TEAMS_SEPARATOR_ROLE_ID;
+
+    if (!separatorRoleId) {
+        throw new TitanBotError(
+            'HCD teams separator role is not configured',
+            ErrorTypes.VALIDATION,
+            'HCD_TEAMS_SEPARATOR_ROLE_ID is not configured. An Administrator must configure the Equipos separator role before creating teams.',
+        );
+    }
+
+    let separatorRole =
+        interaction.guild.roles.cache.get(
+            separatorRoleId,
+        );
+
+    if (!separatorRole) {
+        try {
+            separatorRole =
+                await interaction.guild.roles.fetch(
+                    separatorRoleId,
+                );
+        } catch {
+            separatorRole = null;
+        }
+    }
+
+    if (!separatorRole) {
+        throw new TitanBotError(
+            'HCD teams separator role was not found',
+            ErrorTypes.VALIDATION,
+            'HCD Hub could not find the configured Equipos separator role. Check HCD_TEAMS_SEPARATOR_ROLE_ID.',
+        );
+    }
+
+    return separatorRole;
+}
+
+/**
+ * Creates the Discord role owned by HCD Hub for a competitive team
+ * and positions it directly below the Equipos separator.
+ */
+async function createManagedTeamRole({
+    interaction,
+    name,
+    tag = null,
+}) {
+    const separatorRole =
+        await getTeamsSeparatorRole(interaction);
+
+    const botMember =
+        interaction.guild.members.me ??
+        await interaction.guild.members.fetchMe();
+
+    if (
+        !botMember.permissions.has(
+            PermissionsBitField.Flags.ManageRoles,
+        )
+    ) {
+        throw new TitanBotError(
+            'HCD Hub cannot manage roles',
+            ErrorTypes.PERMISSION,
+            'HCD Hub needs the Manage Roles permission to create competitive team roles.',
+        );
+    }
+
+    if (
+        botMember.roles.highest.position <=
+        separatorRole.position
+    ) {
+        throw new TitanBotError(
+            'HCD Hub role is below the teams separator',
+            ErrorTypes.PERMISSION,
+            'The HCD Hub bot role must be above the Equipos separator role so it can position competitive team roles.',
+        );
+    }
+
+    let teamRole = null;
+
+    try {
+        teamRole =
+            await interaction.guild.roles.create({
+                name:
+                    getManagedTeamRoleName(
+                        name,
+                        tag,
+                    ),
+                permissions: [],
+                hoist: false,
+                mentionable: false,
+                reason:
+                    `HCD competitive team created by ${interaction.user.tag}`,
+            });
+
+        // Re-fetch the separator because role positions can shift after
+        // creating a new role.
+        const refreshedSeparator =
+            await getTeamsSeparatorRole(interaction);
+
+        await teamRole.setPosition(
+            Math.max(
+                refreshedSeparator.position - 1,
+                1,
+            ),
+            {
+                reason:
+                    'Position HCD team role below Equipos separator',
+            },
+        );
+
+        return teamRole;
+    } catch (error) {
+        if (teamRole) {
+            try {
+                await teamRole.delete(
+                    'HCD team role creation/positioning failed',
+                );
+            } catch {
+                // Best-effort cleanup only.
+            }
+        }
+
+        logger.error(
+            'Failed to create or position HCD team role',
+            {
+                guildId: interaction.guildId,
+                userId: interaction.user.id,
+                separatorRoleId:
+                    separatorRole.id,
+                error: error.message,
+            },
+        );
+
+        throw new TitanBotError(
+            'Failed to create HCD team role',
+            ErrorTypes.VALIDATION,
+            'HCD Hub could not create and position the Team Role. Make sure the bot has Manage Roles and that the HCD Hub role is above the Equipos separator.',
+        );
+    }
+}
+
+/**
+ * Renames the HCD Hub-managed Discord role when the team's public
+ * identity changes.
+ */
+async function renameManagedTeamRole(
+    interaction,
+    roleId,
+    name,
+    tag = null,
+) {
+    if (!roleId) {
+        return null;
+    }
+
+    let teamRole =
+        interaction.guild.roles.cache.get(roleId);
+
+    if (!teamRole) {
+        try {
+            teamRole =
+                await interaction.guild.roles.fetch(
+                    roleId,
+                );
+        } catch {
+            teamRole = null;
+        }
+    }
+
+    if (!teamRole) {
+        throw new TitanBotError(
+            'HCD team role was not found',
+            ErrorTypes.VALIDATION,
+            'The Discord Team Role linked to this team no longer exists.',
+        );
+    }
+
+    const desiredName =
+        getManagedTeamRoleName(name, tag);
+
+    if (teamRole.name === desiredName) {
+        return {
+            role: teamRole,
+            renamed: false,
+            previousName: teamRole.name,
+        };
+    }
+
+    const previousName = teamRole.name;
+
+    try {
+        await teamRole.setName(
+            desiredName,
+            `HCD team identity updated by ${interaction.user.tag}`,
+        );
+
+        return {
+            role: teamRole,
+            renamed: true,
+            previousName,
+        };
+    } catch (error) {
+        logger.error(
+            'Failed to rename HCD team role',
+            {
+                guildId: interaction.guildId,
+                roleId,
+                desiredName,
+                error: error.message,
+            },
+        );
+
+        throw new TitanBotError(
+            'Failed to rename HCD team role',
+            ErrorTypes.VALIDATION,
+            'HCD Hub could not rename the Team Role. Check the bot role hierarchy and Manage Roles permission.',
+        );
+    }
+}
+
+/**
  * Handles /team create.
  */
 async function handleCreate(interaction) {
@@ -314,14 +566,11 @@ async function handleCreate(interaction) {
         true,
     );
 
-    const tag = interaction.options.getString('tag');
+    const tag =
+        interaction.options.getString('tag');
 
-    const manager = interaction.options.getUser(
-        'manager',
-        true,
-    );
-
-    const role = interaction.options.getRole('role');
+    const manager =
+        interaction.options.getUser('manager');
 
     const discordUrl =
         interaction.options.getString('discord');
@@ -329,7 +578,7 @@ async function handleCreate(interaction) {
     const logoAttachment =
         interaction.options.getAttachment('logo');
 
-    if (manager.bot) {
+    if (manager?.bot) {
         throw new TitanBotError(
             'Bot cannot manage team',
             ErrorTypes.USER_INPUT,
@@ -337,23 +586,33 @@ async function handleCreate(interaction) {
         );
     }
 
-    const logoResult =
-        await createTeamLogoEmoji({
-            interaction,
-            attachment: logoAttachment,
-            teamName: name,
-            teamTag: tag,
-        });
-
-    let team;
+    let logoResult = null;
+    let teamRole = null;
+    let team = null;
 
     try {
+        logoResult =
+            await createTeamLogoEmoji({
+                interaction,
+                attachment: logoAttachment,
+                teamName: name,
+                teamTag: tag,
+            });
+
+        teamRole =
+            await createManagedTeamRole({
+                interaction,
+                name,
+                tag,
+            });
+
         team = await TeamService.create({
             guildId: interaction.guildId,
             name,
             tag,
-            managerId: manager.id,
-            roleId: role?.id ?? null,
+            managerId:
+                manager?.id ?? null,
+            roleId: teamRole.id,
             discordUrl,
             logoUrl:
                 logoResult?.logoUrl ?? null,
@@ -361,6 +620,16 @@ async function handleCreate(interaction) {
                 logoResult?.buttonEmoji ?? null,
         });
     } catch (error) {
+        if (teamRole) {
+            try {
+                await teamRole.delete(
+                    'HCD team creation failed',
+                );
+            } catch {
+                // Best-effort cleanup only.
+            }
+        }
+
         if (logoResult?.emoji) {
             try {
                 await logoResult.emoji.delete(
@@ -386,11 +655,9 @@ async function handleCreate(interaction) {
                 team.tag
                     ? `**Tag:** ${team.tag}`
                     : null,
-                `**Líder de Facción:** <@${team.manager_id}>`,
+                `**Líder de Facción:** ${formatFactionLeader(team.manager_id)}`,
                 `**Team ID:** \`${team.id}\``,
-                team.role_id
-                    ? `**Team Role:** <@&${team.role_id}>`
-                    : null,
+                `**Team Role:** <@&${team.role_id}>`,
             ]
                 .filter(Boolean)
                 .join('\n'),
@@ -432,8 +699,10 @@ async function handleEdit(interaction) {
     const manager =
         interaction.options.getUser('manager');
 
-    const role =
-        interaction.options.getRole('role');
+    const clearManager =
+        interaction.options.getBoolean(
+            'clear_manager',
+        );
 
     const discordUrl =
         interaction.options.getString('discord');
@@ -449,14 +718,28 @@ async function handleEdit(interaction) {
         );
     }
 
-    // Only Owner + Administrador may transfer leadership or change
-    // the Discord team role. The Líder de Facción can edit only
-    // the public identity of their own team.
-    if (!isIdentityAdmin && (manager !== null || role !== null)) {
+    if (
+        manager !== null &&
+        clearManager === true
+    ) {
+        throw new TitanBotError(
+            'Conflicting faction leader options',
+            ErrorTypes.USER_INPUT,
+            'Choose either a new Líder de Facción or clear the current leader, not both.',
+        );
+    }
+
+    if (
+        !isIdentityAdmin &&
+        (
+            manager !== null ||
+            clearManager !== null
+        )
+    ) {
         throw new TitanBotError(
             'Restricted team administration field',
             ErrorTypes.PERMISSION,
-            'Only an HCD Administrator or the Owner can change the Líder de Facción or Team Role.',
+            'Only an HCD Administrator or the Owner can change or remove the Líder de Facción.',
         );
     }
 
@@ -464,7 +747,7 @@ async function handleEdit(interaction) {
         name === null &&
         tag === null &&
         manager === null &&
-        role === null &&
+        clearManager === null &&
         discordUrl === null &&
         logoAttachment === null
     ) {
@@ -475,19 +758,41 @@ async function handleEdit(interaction) {
         );
     }
 
-    const logoResult =
-        await createTeamLogoEmoji({
-            interaction,
-            attachment: logoAttachment,
-            teamName:
-                name ?? currentTeam.name,
-            teamTag:
-                tag ?? currentTeam.tag,
-        });
+    const nextName =
+        name ?? currentTeam.name;
 
-    let team;
+    const nextTag =
+        tag ?? currentTeam.tag;
+
+    let logoResult = null;
+    let roleUpdate = null;
+    let team = null;
 
     try {
+        logoResult =
+            await createTeamLogoEmoji({
+                interaction,
+                attachment: logoAttachment,
+                teamName: nextName,
+                teamTag: nextTag,
+            });
+
+        if (
+            currentTeam.role_id &&
+            (
+                name !== null ||
+                tag !== null
+            )
+        ) {
+            roleUpdate =
+                await renameManagedTeamRole(
+                    interaction,
+                    currentTeam.role_id,
+                    nextName,
+                    nextTag,
+                );
+        }
+
         team = await TeamService.update({
             guildId: interaction.guildId,
             teamId,
@@ -496,9 +801,9 @@ async function handleEdit(interaction) {
             tag:
                 tag ?? undefined,
             managerId:
-                manager?.id ?? undefined,
-            roleId:
-                role?.id ?? undefined,
+                clearManager === true
+                    ? null
+                    : manager?.id ?? undefined,
             discordUrl:
                 discordUrl ?? undefined,
             logoUrl:
@@ -507,6 +812,31 @@ async function handleEdit(interaction) {
                 logoResult?.buttonEmoji ?? undefined,
         });
     } catch (error) {
+        if (
+            roleUpdate?.renamed &&
+            roleUpdate.role
+        ) {
+            try {
+                await roleUpdate.role.setName(
+                    roleUpdate.previousName,
+                    'Rollback failed HCD team update',
+                );
+            } catch (rollbackError) {
+                logger.warn(
+                    'Failed to rollback HCD team role name',
+                    {
+                        guildId:
+                            interaction.guildId,
+                        teamId,
+                        roleId:
+                            currentTeam.role_id,
+                        error:
+                            rollbackError.message,
+                    },
+                );
+            }
+        }
+
         if (logoResult?.emoji) {
             try {
                 await logoResult.emoji.delete(
@@ -546,7 +876,7 @@ async function handleEdit(interaction) {
                         : ''
                 }`,
                 `**Team ID:** \`${team.id}\``,
-                `**Líder de Facción:** <@${team.manager_id}>`,
+                `**Líder de Facción:** ${formatFactionLeader(team.manager_id)}`,
                 team.role_id
                     ? `**Team Role:** <@&${team.role_id}>`
                     : '**Team Role:** None',
@@ -564,7 +894,7 @@ async function handleEdit(interaction) {
  * Handles /team delete.
  *
  * Only Owner + Administrador can deactivate a team.
- * The Discord team role itself is intentionally preserved.
+ * The HCD Hub-managed Discord team role is deleted after roster cleanup.
  */
 async function handleDelete(interaction) {
     if (!isHcdTeamIdentityAdmin(interaction)) {
@@ -712,6 +1042,54 @@ async function handleDelete(interaction) {
         }
     }
 
+    let teamRoleDeleted = false;
+
+    if (team.role_id) {
+        try {
+            let teamRole =
+                interaction.guild.roles.cache.get(
+                    team.role_id,
+                );
+
+            if (!teamRole) {
+                try {
+                    teamRole =
+                        await interaction.guild.roles.fetch(
+                            team.role_id,
+                        );
+                } catch {
+                    teamRole = null;
+                }
+            }
+
+            if (teamRole) {
+                await teamRole.delete(
+                    `HCD team ${team.name} was deleted by ${interaction.user.tag}`,
+                );
+                teamRoleDeleted = true;
+            } else {
+                teamRoleDeleted = true;
+            }
+        } catch (error) {
+            logger.warn(
+                'Failed to delete HCD team role during team deletion',
+                {
+                    guildId:
+                        interaction.guildId,
+                    teamId,
+                    roleId:
+                        team.role_id,
+                    error:
+                        error.message,
+                },
+            );
+
+            roleWarnings.push(
+                'The Discord Team Role could not be deleted automatically.',
+            );
+        }
+    }
+
     if (team.button_emoji) {
         await cleanupOldTeamEmoji(
             interaction,
@@ -736,7 +1114,9 @@ async function handleDelete(interaction) {
                 `**Roster members removed:** ${members.length}`,
                 '',
                 team.role_id
-                    ? `ℹ️ **Discord Team Role preserved:** <@&${team.role_id}>`
+                    ? teamRoleDeleted
+                        ? '🧹 **Discord Team Role:** Deleted automatically'
+                        : '⚠️ **Discord Team Role:** Could not be deleted automatically'
                     : 'ℹ️ **Discord Team Role:** None',
                 'The team was deactivated, pending invitations were cancelled, and the public teams panel was refreshed.',
                 '',
@@ -1076,7 +1456,7 @@ async function handleRoster(interaction) {
     const content = [
         `## ${team.name}${team.tag ? ` [${team.tag}]` : ''}`,
         '',
-        `**Líder de Facción:** <@${team.manager_id}>`,
+        `**Líder de Facción:** ${formatFactionLeader(team.manager_id)}`,
         `**Players:** ${counts.total}/9`,
         '',
         `### Capitanes — ${counts.captain}/${TEAM_LIMITS.captain}`,
@@ -1153,24 +1533,16 @@ export default {
                     option
                         .setName('manager')
                         .setDescription(
-                            'Líder de Facción',
-                        )
-                        .setRequired(true),
+                            'Líder de Facción (optional)',
+                        ),
                 )
                 .addStringOption((option) =>
                     option
                         .setName('tag')
                         .setDescription(
-                            'Short team tag',
+                            'Short team tag (used for the automatic Team Role)',
                         )
                         .setMaxLength(20),
-                )
-                .addRoleOption((option) =>
-                    option
-                        .setName('role')
-                        .setDescription(
-                            'Discord role assigned to the team',
-                        ),
                 )
                 .addStringOption((option) =>
                     option
@@ -1224,11 +1596,11 @@ export default {
                             'Nuevo Líder de Facción',
                         ),
                 )
-                .addRoleOption((option) =>
+                .addBooleanOption((option) =>
                     option
-                        .setName('role')
+                        .setName('clear_manager')
                         .setDescription(
-                            'Discord role assigned to the team',
+                            'Remove the current Líder de Facción',
                         ),
                 )
                 .addStringOption((option) =>
@@ -1457,7 +1829,7 @@ async execute(interaction, config, client) {
                 await handleMove(interaction);
                 break;
 
-                       case 'roster':
+            case 'roster':
                 await handleRoster(interaction);
                 break;
 
