@@ -17,6 +17,8 @@ import {
     removeTeamMember,
     moveTeamMember,
     expireTeamInvites,
+    deactivateTeam,
+    cancelPendingTeamInvites,
 } from '../utils/database/teams.js';
 
 const TEAM_LIMITS = Object.freeze({
@@ -612,6 +614,67 @@ static async update({
         );
     }
 }
+    /**
+     * Deactivates an HCD team and cancels its pending invitations.
+     *
+     * This intentionally does not delete the Discord team role.
+     * Discord-side cleanup is handled by the command layer.
+     */
+    static async deactivate({
+        guildId,
+        teamId,
+        deactivatedBy = null,
+    }) {
+        try {
+            const team = await this.get(
+                guildId,
+                teamId,
+            );
+
+            await cancelPendingTeamInvites(
+                guildId,
+                teamId,
+            );
+
+            const deactivatedTeam =
+                await deactivateTeam(
+                    guildId,
+                    teamId,
+                );
+
+            if (!deactivatedTeam) {
+                throw createError(
+                    'Team deactivation failed',
+                    ErrorTypes.VALIDATION,
+                    'The team could not be deactivated.',
+                    {
+                        guildId,
+                        teamId,
+                    },
+                );
+            }
+
+            logger.info('HCD team deactivated', {
+                guildId,
+                teamId,
+                name: team.name,
+                deactivatedBy,
+            });
+
+            return deactivatedTeam;
+        } catch (error) {
+            return this.handleError(
+                'deactivate team',
+                error,
+                {
+                    guildId,
+                    teamId,
+                    deactivatedBy,
+                },
+            );
+        }
+    }
+
     static async get(guildId, teamId) {
         try {
             const team = await getTeamById(
