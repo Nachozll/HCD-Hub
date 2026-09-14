@@ -164,7 +164,7 @@ export const tableStatements = [
         guild_id VARCHAR(20) NOT NULL,
         name VARCHAR(100) NOT NULL,
         tag VARCHAR(20),
-        manager_id VARCHAR(20) NOT NULL,
+        manager_id VARCHAR(20),
         role_id VARCHAR(20),
         discord_url TEXT,
         logo_url TEXT,
