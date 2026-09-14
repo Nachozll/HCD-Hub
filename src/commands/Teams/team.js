@@ -10,6 +10,8 @@ import TeamService, {
     TEAM_LIMITS,
 } from '../../services/teamService.js';
 
+import TeamPanelService from '../../services/teamPanelService.js';
+
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { logger } from '../../utils/logger.js';
 import {
@@ -877,7 +879,7 @@ async function handleRoster(interaction) {
 }
 /**
  * Handles /team panel.
- * Publishes the public HCD teams panel.
+ * Creates the official HCD teams panel or refreshes the existing one.
  */
 async function handlePanel(interaction) {
     if (!isHcdStaff(interaction)) {
@@ -888,72 +890,17 @@ async function handlePanel(interaction) {
         );
     }
 
-    const teams = await TeamService.getTeams(
-        interaction.guildId,
-    );
-
-    if (!teams.length) {
-        throw new TitanBotError(
-            'No active HCD teams',
-            ErrorTypes.VALIDATION,
-            'There are no active HCD teams to display.',
+    const result =
+        await TeamPanelService.publishOrRefresh(
+            interaction.channel,
         );
-    }
-
-    const embed = new EmbedBuilder()
-        .setColor('#C9A227')
-        .setTitle('HCD | EQUIPOS')
-        .setDescription(
-            [
-                'Este canal reúne a los equipos oficialmente registrados en Hispanic Competitive Development, que posteriormente competirán dentro del Competitive Hub.',
-                '',
-                'Selecciona un equipo para consultar su **Líder de Facción, Capitanes, Main Roster, Sub Roster** y acceder a su **servidor oficial**.',
-            ].join('\n'),
-        );
-
-    const teamsBannerUrl =
-        process.env.HCD_TEAMS_BANNER_URL;
-
-    if (teamsBannerUrl) {
-        embed.setImage(teamsBannerUrl);
-    }
-
-    const rows = [];
-
-    for (let i = 0; i < teams.length; i += 5) {
-        const row = new ActionRowBuilder();
-
-        const group = teams.slice(i, i + 5);
-
-        for (const team of group) {
-            const label = team.tag
-                ? `${team.tag} | ${team.name}`
-                : team.name;
-
-            const button = new ButtonBuilder()
-                .setCustomId(`team_view:${team.id}`)
-                .setLabel(label.slice(0, 80))
-                .setStyle(ButtonStyle.Secondary);
-
-            if (team.button_emoji) {
-                button.setEmoji(team.button_emoji);
-            }
-
-            row.addComponents(button);
-        }
-
-        rows.push(row);
-    }
-
-    await interaction.channel.send({
-        embeds: [embed],
-        components: rows,
-    });
 
     await InteractionHelper.safeEditReply(
         interaction,
         {
-            content: '✅ **Teams panel published successfully**',
+            content: result.created
+                ? '✅ **Teams panel created successfully**'
+                : '🔄 **Teams panel refreshed successfully**',
         },
     );
 }
