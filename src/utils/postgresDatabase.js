@@ -91,6 +91,16 @@ class PostgreSQLDatabase {
                     await this.createTables();
 
                     try {
+                        await this.pool.query(`
+                            ALTER TABLE ${pgConfig.tables.hcd_teams}
+                            ALTER COLUMN manager_id DROP NOT NULL
+                        `);
+                        logger.info('HCD teams manager_id column verified as nullable');
+                    } catch (error) {
+                        logger.warn('Could not make HCD teams manager_id nullable:', error.message);
+                    }
+
+                    try {
                         const columnCheck = await this.pool.query(`
                             SELECT column_name 
                             FROM information_schema.columns 
