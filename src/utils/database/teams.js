@@ -209,6 +209,132 @@ export async function deactivateTeam(guildId, teamId) {
     });
 }
 
+
+/**
+ * Deactivates a team, clears its competitive roster, and cancels
+ * every pending invitation inside a single PostgreSQL transaction.
+ *
+ * Returns the deactivated team and the roster members that were removed.
+ */
+export async function deactivateTeamAndClearRoster(guildId, teamId) {
+    ensureDatabaseAvailable();
+
+    const connection = await pgDb.pool.connect();
+
+    try {
+        await connection.query('BEGIN');
+
+        const teamResult = await connection.query(
+            `SELECT *
+             FROM ${t.hcd_teams}
+             WHERE guild_id = $1
+               AND id = $2
+             FOR UPDATE`,
+            [
+                guildId,
+                teamId,
+            ],
+        );
+
+        const team = teamResult.rows[0];
+
+        if (!team) {
+            throw new Error('Team not found');
+        }
+
+        const rosterResult = await connection.query(
+            `SELECT *
+             FROM ${t.hcd_team_members}
+             WHERE guild_id = $1
+               AND team_id = $2
+             ORDER BY joined_at ASC
+             FOR UPDATE`,
+            [
+                guildId,
+                teamId,
+            ],
+        );
+
+        const members = rosterResult.rows || [];
+
+        await connection.query(
+            `UPDATE ${t.hcd_team_invites}
+             SET status = 'cancelled'
+             WHERE guild_id = $1
+               AND team_id = $2
+               AND status = 'pending'`,
+            [
+                guildId,
+                teamId,
+            ],
+        );
+
+        await connection.query(
+            `DELETE FROM ${t.hcd_team_members}
+             WHERE guild_id = $1
+               AND team_id = $2`,
+            [
+                guildId,
+                teamId,
+            ],
+        );
+
+        const deactivateResult = await connection.query(
+            `UPDATE ${t.hcd_teams}
+             SET active = FALSE
+             WHERE guild_id = $1
+               AND id = $2
+             RETURNING *`,
+            [
+                guildId,
+                teamId,
+            ],
+        );
+
+        const deactivatedTeam =
+            deactivateResult.rows[0] || null;
+
+        await connection.query('COMMIT');
+
+        logger.info('HCD team deactivated and roster cleared', {
+            guildId,
+            teamId,
+            removedMembers: members.length,
+        });
+
+        return {
+            team: deactivatedTeam,
+            members,
+        };
+    } catch (error) {
+        try {
+            await connection.query('ROLLBACK');
+        } catch (rollbackError) {
+            logger.error(
+                'Failed to rollback HCD team deactivation transaction',
+                {
+                    guildId,
+                    teamId,
+                    error: rollbackError.message,
+                },
+            );
+        }
+
+        logger.error(
+            'Failed to deactivate HCD team and clear roster',
+            {
+                guildId,
+                teamId,
+                error: error.message,
+            },
+        );
+
+        throw error;
+    } finally {
+        connection.release();
+    }
+}
+
 /**
  * Returns the complete competitive roster for a team.
  */
