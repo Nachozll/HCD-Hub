@@ -891,17 +891,17 @@ async function handleEdit(interaction) {
 }
 
 /**
- * Handles /team delete.
+ * Handles /team disband.
  *
- * Only Owner + Administrador can deactivate a team.
+ * Only Owner + Administrador can disband a team.
  * The HCD Hub-managed Discord team role is deleted after roster cleanup.
  */
-async function handleDelete(interaction) {
+async function handleDisband(interaction) {
     if (!isHcdTeamIdentityAdmin(interaction)) {
         throw new TitanBotError(
-            'Missing team deletion permission',
+            'Missing team disband permission',
             ErrorTypes.PERMISSION,
-            'Only an HCD Administrator or the Owner can delete a team.',
+            'Only an HCD Administrator or the Owner can disband a team.',
         );
     }
 
@@ -946,12 +946,12 @@ async function handleDelete(interaction) {
                     ) {
                         await member.roles.remove(
                             team.role_id,
-                            `HCD team ${team.name} was deleted`,
+                            `HCD team ${team.name} was disbanded`,
                         );
                     }
                 } catch (error) {
                     logger.warn(
-                        'Failed to remove team role during team deletion',
+                        'Failed to remove team role during team disband',
                         {
                             guildId:
                                 interaction.guildId,
@@ -983,12 +983,12 @@ async function handleDelete(interaction) {
                     ) {
                         await member.roles.add(
                             freeAgentRoleId,
-                            `HCD team ${team.name} was deleted`,
+                            `HCD team ${team.name} was disbanded`,
                         );
                     }
                 } catch (error) {
                     logger.warn(
-                        'Failed to restore free-agent role during team deletion',
+                        'Failed to restore free-agent role during team disband',
                         {
                             guildId:
                                 interaction.guildId,
@@ -1008,7 +1008,7 @@ async function handleDelete(interaction) {
                 }
             } else {
                 logger.warn(
-                    'HCD_FREE_AGENT_ROLE_ID is not configured during team deletion',
+                    'HCD_FREE_AGENT_ROLE_ID is not configured during team disband',
                     {
                         guildId:
                             interaction.guildId,
@@ -1024,7 +1024,7 @@ async function handleDelete(interaction) {
             }
         } catch (error) {
             logger.warn(
-                'Failed to fetch roster member during team deletion',
+                'Failed to fetch roster member during team disband',
                 {
                     guildId:
                         interaction.guildId,
@@ -1064,7 +1064,7 @@ async function handleDelete(interaction) {
 
             if (teamRole) {
                 await teamRole.delete(
-                    `HCD team ${team.name} was deleted by ${interaction.user.tag}`,
+                    `HCD team ${team.name} was disbanded by ${interaction.user.tag}`,
                 );
                 teamRoleDeleted = true;
             } else {
@@ -1072,7 +1072,7 @@ async function handleDelete(interaction) {
             }
         } catch (error) {
             logger.warn(
-                'Failed to delete HCD team role during team deletion',
+                'Failed to delete HCD team role during team disband',
                 {
                     guildId:
                         interaction.guildId,
@@ -1103,7 +1103,7 @@ async function handleDelete(interaction) {
         interaction,
         {
             content: [
-                '🗑️ **Team deleted successfully**',
+                '🛑 **Team disbanded successfully**',
                 '',
                 `**Team:** ${team.name}${
                     team.tag
@@ -1118,7 +1118,7 @@ async function handleDelete(interaction) {
                         ? '🧹 **Discord Team Role:** Deleted automatically'
                         : '⚠️ **Discord Team Role:** Could not be deleted automatically'
                     : 'ℹ️ **Discord Team Role:** None',
-                'The team was deactivated, pending invitations were cancelled, and the public teams panel was refreshed.',
+                'The team was disbanded, pending invitations were cancelled, and the public teams panel was refreshed.',
                 '',
                 roleWarnings.length
                     ? `⚠️ **Role sync warnings:**\n${roleWarnings.join('\n')}`
@@ -1621,9 +1621,9 @@ export default {
 
         .addSubcommand((subcommand) =>
             subcommand
-                .setName('delete')
+                .setName('disband')
                 .setDescription(
-                    'Delete an HCD competitive team',
+                    'Disband an HCD competitive team',
                 )
                 .addIntegerOption((option) =>
                     option
@@ -1813,8 +1813,8 @@ async execute(interaction, config, client) {
                 await handleEdit(interaction);
                 break;
 
-            case 'delete':
-                await handleDelete(interaction);
+            case 'disband':
+                await handleDisband(interaction);
                 break;
 
             case 'invite':
