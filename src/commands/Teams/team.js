@@ -266,6 +266,38 @@ function formatRosterSection(members = []) {
 }
 
 /**
+ * Refreshes the public teams panel after a team identity change.
+ * Team creation/editing must still succeed even if the panel cannot refresh.
+ */
+async function refreshTeamsPanelSafely(interaction) {
+    try {
+        const result =
+            await TeamPanelService.refreshPanel(
+                interaction.guild,
+            );
+
+        if (!result.updated && !result.missing) {
+            logger.warn(
+                'HCD teams panel was not refreshed',
+                {
+                    guildId: interaction.guildId,
+                    reason:
+                        result.reason || 'unknown',
+                },
+            );
+        }
+    } catch (error) {
+        logger.warn(
+            'Failed to automatically refresh HCD teams panel',
+            {
+                guildId: interaction.guildId,
+                error: error.message,
+            },
+        );
+    }
+}
+
+/**
  * Handles /team create.
  */
 async function handleCreate(interaction) {
@@ -341,6 +373,8 @@ async function handleCreate(interaction) {
 
         throw error;
     }
+
+    await refreshTeamsPanelSafely(interaction);
 
     await InteractionHelper.safeEditReply(
         interaction,
@@ -497,6 +531,8 @@ async function handleEdit(interaction) {
             currentTeam.button_emoji,
         );
     }
+
+    await refreshTeamsPanelSafely(interaction);
 
     await InteractionHelper.safeEditReply(
         interaction,
