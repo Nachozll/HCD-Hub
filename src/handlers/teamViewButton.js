@@ -12,6 +12,12 @@ function formatRosterSection(members = []) {
         .join('\n');
 }
 
+function formatFactionLeader(managerId) {
+    return managerId
+        ? `<@${managerId}>`
+        : '*Sin Líder de Facción*';
+}
+
 export const teamViewHandler = {
     name: 'team_view',
 
@@ -34,7 +40,9 @@ export const teamViewHandler = {
         const fields = [
             {
                 name: '👑 Líder de Facción',
-                value: `<@${team.manager_id}>`,
+                value: formatFactionLeader(
+                    team.manager_id,
+                ),
             },
             {
                 name: `⚔️ Capitanes — ${counts.captain}/${TEAM_LIMITS.captain}`,
