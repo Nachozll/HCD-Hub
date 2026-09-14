@@ -673,14 +673,15 @@ static async update({
                 teamId,
             );
 
-            if (!team) {
+            if (!team || !team.active) {
                 throw createError(
-                    'Team not found',
+                    'Team not found or inactive',
                     ErrorTypes.VALIDATION,
-                    'This team does not exist.',
+                    'This team does not exist or is no longer active.',
                     {
                         guildId,
                         teamId,
+                        active: team?.active ?? null,
                     },
                 );
             }
