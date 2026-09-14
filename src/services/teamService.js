@@ -17,8 +17,7 @@ import {
     removeTeamMember,
     moveTeamMember,
     expireTeamInvites,
-    deactivateTeam,
-    cancelPendingTeamInvites,
+    deactivateTeamAndClearRoster,
 } from '../utils/database/teams.js';
 
 const TEAM_LIMITS = Object.freeze({
@@ -615,10 +614,10 @@ static async update({
     }
 }
     /**
-     * Deactivates an HCD team and cancels its pending invitations.
+     * Deactivates an HCD team, clears its competitive roster, and
+     * cancels pending invitations through one atomic DB transaction.
      *
-     * This intentionally does not delete the Discord team role.
-     * Discord-side cleanup is handled by the command layer.
+     * Discord-side role and emoji cleanup is handled by the command layer.
      */
     static async deactivate({
         guildId,
@@ -626,23 +625,13 @@ static async update({
         deactivatedBy = null,
     }) {
         try {
-            const team = await this.get(
-                guildId,
-                teamId,
-            );
-
-            await cancelPendingTeamInvites(
-                guildId,
-                teamId,
-            );
-
-            const deactivatedTeam =
-                await deactivateTeam(
+            const result =
+                await deactivateTeamAndClearRoster(
                     guildId,
                     teamId,
                 );
 
-            if (!deactivatedTeam) {
+            if (!result?.team) {
                 throw createError(
                     'Team deactivation failed',
                     ErrorTypes.VALIDATION,
@@ -657,11 +646,13 @@ static async update({
             logger.info('HCD team deactivated', {
                 guildId,
                 teamId,
-                name: team.name,
+                name: result.team.name,
+                removedMembers:
+                    result.members?.length || 0,
                 deactivatedBy,
             });
 
-            return deactivatedTeam;
+            return result;
         } catch (error) {
             return this.handleError(
                 'deactivate team',
