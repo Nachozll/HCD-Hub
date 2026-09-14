@@ -561,6 +561,196 @@ async function handleEdit(interaction) {
 }
 
 /**
+ * Handles /team delete.
+ *
+ * Only Owner + Administrador can deactivate a team.
+ * The Discord team role itself is intentionally preserved.
+ */
+async function handleDelete(interaction) {
+    if (!isHcdTeamIdentityAdmin(interaction)) {
+        throw new TitanBotError(
+            'Missing team deletion permission',
+            ErrorTypes.PERMISSION,
+            'Only an HCD Administrator or the Owner can delete a team.',
+        );
+    }
+
+    const teamId = getTeamId(interaction);
+
+    const currentTeam = await TeamService.get(
+        interaction.guildId,
+        teamId,
+    );
+
+    if (!currentTeam.active) {
+        throw new TitanBotError(
+            'Team is already inactive',
+            ErrorTypes.VALIDATION,
+            'This team is already inactive.',
+        );
+    }
+
+    const result = await TeamService.deactivate({
+        guildId: interaction.guildId,
+        teamId,
+        deactivatedBy: interaction.user.id,
+    });
+
+    const team = result.team;
+    const members = result.members || [];
+    const roleWarnings = [];
+
+    for (const rosterMember of members) {
+        try {
+            const member =
+                await interaction.guild.members.fetch(
+                    rosterMember.user_id,
+                );
+
+            if (team.role_id) {
+                try {
+                    if (
+                        member.roles.cache.has(
+                            team.role_id,
+                        )
+                    ) {
+                        await member.roles.remove(
+                            team.role_id,
+                            `HCD team ${team.name} was deleted`,
+                        );
+                    }
+                } catch (error) {
+                    logger.warn(
+                        'Failed to remove team role during team deletion',
+                        {
+                            guildId:
+                                interaction.guildId,
+                            teamId,
+                            userId:
+                                rosterMember.user_id,
+                            roleId:
+                                team.role_id,
+                            error:
+                                error.message,
+                        },
+                    );
+
+                    roleWarnings.push(
+                        `<@${rosterMember.user_id}>: team role could not be removed.`,
+                    );
+                }
+            }
+
+            const freeAgentRoleId =
+                process.env.HCD_FREE_AGENT_ROLE_ID;
+
+            if (freeAgentRoleId) {
+                try {
+                    if (
+                        !member.roles.cache.has(
+                            freeAgentRoleId,
+                        )
+                    ) {
+                        await member.roles.add(
+                            freeAgentRoleId,
+                            `HCD team ${team.name} was deleted`,
+                        );
+                    }
+                } catch (error) {
+                    logger.warn(
+                        'Failed to restore free-agent role during team deletion',
+                        {
+                            guildId:
+                                interaction.guildId,
+                            teamId,
+                            userId:
+                                rosterMember.user_id,
+                            roleId:
+                                freeAgentRoleId,
+                            error:
+                                error.message,
+                        },
+                    );
+
+                    roleWarnings.push(
+                        `<@${rosterMember.user_id}>: Jugador Libre could not be restored.`,
+                    );
+                }
+            } else {
+                logger.warn(
+                    'HCD_FREE_AGENT_ROLE_ID is not configured during team deletion',
+                    {
+                        guildId:
+                            interaction.guildId,
+                        teamId,
+                        userId:
+                            rosterMember.user_id,
+                    },
+                );
+
+                roleWarnings.push(
+                    `<@${rosterMember.user_id}>: Jugador Libre could not be restored because HCD_FREE_AGENT_ROLE_ID is not configured.`,
+                );
+            }
+        } catch (error) {
+            logger.warn(
+                'Failed to fetch roster member during team deletion',
+                {
+                    guildId:
+                        interaction.guildId,
+                    teamId,
+                    userId:
+                        rosterMember.user_id,
+                    error:
+                        error.message,
+                },
+            );
+
+            roleWarnings.push(
+                `<@${rosterMember.user_id}>: Discord roles could not be synchronized.`,
+            );
+        }
+    }
+
+    if (team.button_emoji) {
+        await cleanupOldTeamEmoji(
+            interaction,
+            team.button_emoji,
+        );
+    }
+
+    await refreshTeamsPanelSafely(interaction);
+
+    await InteractionHelper.safeEditReply(
+        interaction,
+        {
+            content: [
+                '🗑️ **Team deleted successfully**',
+                '',
+                `**Team:** ${team.name}${
+                    team.tag
+                        ? ` [${team.tag}]`
+                        : ''
+                }`,
+                `**Team ID:** \`${team.id}\``,
+                `**Roster members removed:** ${members.length}`,
+                '',
+                team.role_id
+                    ? `ℹ️ **Discord Team Role preserved:** <@&${team.role_id}>`
+                    : 'ℹ️ **Discord Team Role:** None',
+                'The team was deactivated, pending invitations were cancelled, and the public teams panel was refreshed.',
+                '',
+                roleWarnings.length
+                    ? `⚠️ **Role sync warnings:**\n${roleWarnings.join('\n')}`
+                    : members.length
+                        ? '🔄 Team roles were removed and Jugador Libre was restored for roster members.'
+                        : '✅ No roster members required Discord role cleanup.',
+            ].join('\n'),
+        },
+    );
+}
+
+/**
  * Handles /team invite.
  */
 async function handleInvite(interaction) {
@@ -1059,6 +1249,21 @@ export default {
 
         .addSubcommand((subcommand) =>
             subcommand
+                .setName('delete')
+                .setDescription(
+                    'Delete an HCD competitive team',
+                )
+                .addIntegerOption((option) =>
+                    option
+                        .setName('team')
+                        .setDescription('Team ID')
+                        .setRequired(true)
+                        .setMinValue(1),
+                ),
+        )
+
+        .addSubcommand((subcommand) =>
+            subcommand
                 .setName('invite')
                 .setDescription(
                     'Invite a player to a team',
@@ -1234,6 +1439,10 @@ async execute(interaction, config, client) {
 
             case 'edit':
                 await handleEdit(interaction);
+                break;
+
+            case 'delete':
+                await handleDelete(interaction);
                 break;
 
             case 'invite':
