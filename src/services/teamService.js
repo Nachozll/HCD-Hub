@@ -75,18 +75,31 @@ class TeamService {
         const {
             guildId,
             name,
-            managerId,
         } = data;
 
-        if (!guildId || !name || !managerId) {
+        if (!guildId || !name) {
             throw createError(
                 'Missing required team fields',
                 ErrorTypes.VALIDATION,
-                'Guild, team name, and Team Manager are required.',
+                'Guild and team name are required.',
                 {
                     guildId,
                     name,
-                    managerId,
+                },
+            );
+        }
+
+        if (
+            data.managerId !== undefined &&
+            data.managerId !== null &&
+            !String(data.managerId).trim()
+        ) {
+            throw createError(
+                'Invalid team manager',
+                ErrorTypes.VALIDATION,
+                'Líder de Facción must be a valid Discord user or left unassigned.',
+                {
+                    managerId: data.managerId,
                 },
             );
         }
@@ -442,7 +455,7 @@ class TeamService {
                 tag: data.tag
                     ? String(data.tag).trim()
                     : null,
-                managerId: data.managerId,
+                managerId: data.managerId || null,
                 roleId: data.roleId || null,
                 discordUrl: data.discordUrl || null,
                 logoUrl: data.logoUrl || null,
