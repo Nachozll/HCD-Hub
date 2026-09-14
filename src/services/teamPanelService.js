@@ -250,8 +250,114 @@ class TeamPanelService {
         };
     }
 
+    static async movePanel(channel, savedPanel) {
+        const guild = channel.guild;
+        const guildId = guild.id;
+
+        const {
+            payload,
+        } = await this.buildPayload(
+            guildId,
+        );
+
+        const newMessage =
+            await channel.send(payload);
+
+        await saveTeamPanel({
+            guildId,
+            channelId: channel.id,
+            messageId: newMessage.id,
+        });
+
+        try {
+            const oldChannel =
+                guild.channels.cache.get(
+                    savedPanel.channel_id,
+                ) ||
+                await guild.channels.fetch(
+                    savedPanel.channel_id,
+                );
+
+            if (oldChannel?.isTextBased()) {
+                const oldMessage =
+                    await oldChannel.messages.fetch(
+                        savedPanel.message_id,
+                    );
+
+                await oldMessage.delete();
+            }
+        } catch (error) {
+            logger.warn(
+                'Failed to delete old HCD teams panel while moving it',
+                {
+                    guildId,
+                    oldChannelId:
+                        savedPanel.channel_id,
+                    oldMessageId:
+                        savedPanel.message_id,
+                    newChannelId:
+                        channel.id,
+                    newMessageId:
+                        newMessage.id,
+                    error: error.message,
+                },
+            );
+        }
+
+        logger.info(
+            'HCD teams panel moved',
+            {
+                guildId,
+                oldChannelId:
+                    savedPanel.channel_id,
+                oldMessageId:
+                    savedPanel.message_id,
+                newChannelId:
+                    channel.id,
+                newMessageId:
+                    newMessage.id,
+            },
+        );
+
+        return newMessage;
+    }
+
     static async publishOrRefresh(channel) {
         const guild = channel.guild;
+        const guildId = guild.id;
+
+        const savedPanel =
+            await getTeamPanel(guildId);
+
+        if (!savedPanel) {
+            const message =
+                await this.createPanel(channel);
+
+            return {
+                created: true,
+                refreshed: false,
+                moved: false,
+                message,
+            };
+        }
+
+        if (
+            savedPanel.channel_id !==
+            channel.id
+        ) {
+            const message =
+                await this.movePanel(
+                    channel,
+                    savedPanel,
+                );
+
+            return {
+                created: true,
+                refreshed: false,
+                moved: true,
+                message,
+            };
+        }
 
         const result =
             await this.refreshPanel(guild);
@@ -260,6 +366,7 @@ class TeamPanelService {
             return {
                 created: false,
                 refreshed: true,
+                moved: false,
                 message: result.message,
             };
         }
@@ -270,6 +377,7 @@ class TeamPanelService {
         return {
             created: true,
             refreshed: false,
+            moved: false,
             message,
         };
     }
