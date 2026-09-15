@@ -12,6 +12,7 @@ import TeamService, {
 } from '../../services/teamService.js';
 
 import TeamPanelService from '../../services/teamPanelService.js';
+import TeamApplicationPanelService from '../../services/teamApplicationPanelService.js';
 
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { logger } from '../../utils/logger.js';
@@ -1485,15 +1486,35 @@ async function handleRoster(interaction) {
 }
 /**
  * Handles /team panel.
- * Creates the official HCD teams panel or refreshes the existing one.
+ * Publishes either the official teams panel or
+ * the public team application panel.
  */
 async function handlePanel(interaction) {
     if (!isHcdStaff(interaction)) {
         throw new TitanBotError(
             'Missing team panel permission',
             ErrorTypes.PERMISSION,
-            'Only HCD Staff can publish the teams panel.',
+            'Only HCD Staff can publish HCD panels.',
         );
+    }
+
+    const panelType =
+        interaction.options.getString('type', true);
+
+    if (panelType === 'applications') {
+        await TeamApplicationPanelService.publish(
+            interaction.channel,
+        );
+
+        await InteractionHelper.safeEditReply(
+            interaction,
+            {
+                content:
+                    '✅ **Team application panel published successfully**',
+            },
+        );
+
+        return;
     }
 
     const result =
@@ -1766,7 +1787,25 @@ export default {
             subcommand
                 .setName('panel')
                 .setDescription(
-                    'Publish the HCD teams panel',
+                    'Publish an HCD team panel',
+                )
+                .addStringOption((option) =>
+                    option
+                        .setName('type')
+                        .setDescription(
+                            'Panel to publish',
+                        )
+                        .setRequired(true)
+                        .addChoices(
+                            {
+                                name: 'Equipos',
+                                value: 'teams',
+                            },
+                            {
+                                name: 'Inscripciones',
+                                value: 'applications',
+                            },
+                        ),
                 ),
         ),
 
