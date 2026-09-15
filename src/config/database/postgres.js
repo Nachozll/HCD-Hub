@@ -20,6 +20,7 @@ const configuredTables = {
     hcd_team_members: 'hcd_team_members',
     hcd_team_invites: 'hcd_team_invites',
     hcd_team_panels: 'hcd_team_panels',
+    hcd_team_applications: 'hcd_team_applications',
     temp_data: 'temp_data',
     cache_data: 'cache_data',
 };
@@ -43,6 +44,7 @@ const allowedTableIdentifiers = new Set([
     'hcd_team_members',
     'hcd_team_invites',
     'hcd_team_panels',
+    'hcd_team_applications',
     'temp_data',
     'cache_data',
 ]);
