@@ -237,6 +237,48 @@ export const tableStatements = [
                 )
             )
     )`,
+    `CREATE TABLE IF NOT EXISTS ${t.hcd_team_applications} (
+        id SERIAL PRIMARY KEY,
+        guild_id VARCHAR(20) NOT NULL,
+        applicant_id VARCHAR(20) NOT NULL,
+
+        name VARCHAR(100) NOT NULL,
+        tag VARCHAR(20),
+        manager_id VARCHAR(20),
+        captain_ids JSONB NOT NULL DEFAULT '[]',
+        discord_url TEXT,
+        logo_url TEXT,
+
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+
+        reviewed_by VARCHAR(20),
+        review_reason TEXT,
+        reviewed_at TIMESTAMP,
+
+        team_id INTEGER,
+
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+        FOREIGN KEY (guild_id)
+            REFERENCES ${t.guilds}(id)
+            ON DELETE CASCADE,
+
+        FOREIGN KEY (team_id)
+            REFERENCES ${t.hcd_teams}(id)
+            ON DELETE SET NULL,
+
+        CONSTRAINT hcd_team_application_status
+            CHECK (
+                status IN (
+                    'pending',
+                    'approved',
+                    'rejected',
+                    'cancelled'
+                )
+            )
+    )`,
+
     `CREATE TABLE IF NOT EXISTS ${t.temp_data} (
         key VARCHAR(255) PRIMARY KEY,
         value JSONB NOT NULL,
@@ -292,6 +334,18 @@ export const indexStatements = [
 
     `CREATE INDEX IF NOT EXISTS idx_hcd_team_invites_expires_at
         ON ${t.hcd_team_invites}(expires_at)`,
+
+    `CREATE INDEX IF NOT EXISTS idx_hcd_team_applications_guild_id
+        ON ${t.hcd_team_applications}(guild_id)`,
+
+    `CREATE INDEX IF NOT EXISTS idx_hcd_team_applications_applicant_id
+        ON ${t.hcd_team_applications}(applicant_id)`,
+
+    `CREATE INDEX IF NOT EXISTS idx_hcd_team_applications_status
+        ON ${t.hcd_team_applications}(status)`,
+
+    `CREATE INDEX IF NOT EXISTS idx_hcd_team_applications_created_at
+        ON ${t.hcd_team_applications}(created_at)`,
 ];
 
 export const UPDATE_TIMESTAMP_FUNCTION = `
@@ -326,4 +380,5 @@ export const triggerDefinitions = [
     { name: 'update_hcd_teams_updated_at', table: t.hcd_teams },
     { name: 'update_hcd_team_members_updated_at', table: t.hcd_team_members },
     { name: 'update_hcd_team_invites_updated_at', table: t.hcd_team_invites },
+    { name: 'update_hcd_team_applications_updated_at', table: t.hcd_team_applications },
     ];
