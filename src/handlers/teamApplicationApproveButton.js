@@ -381,7 +381,16 @@ export const teamApplicationApproveButtonHandler = {
         }
 
         let teamRole = null;
-        const assignedRoleUserIds = [];
+
+        /**
+         * Discord role changes completed by this approval attempt.
+         *
+         * We store the exact changes returned by TeamDiscordService so
+         * a later PostgreSQL failure can restore the previous Discord
+         * state without removing roles the member already had.
+         */
+        const captainProvisioning = [];
+        let managerProvisioning = null;
 
         try {
             /**
@@ -407,53 +416,74 @@ export const teamApplicationApproveButtonHandler = {
                 });
 
             /**
-             * Captains always receive the Team Role.
+             * Provision the complete Discord identity for each Captain.
              *
-             * The Líder de Facción receives the same Team Role
-             * but is intentionally NOT inserted into the
-             * competitive roster.
+             * Result:
+             *
+             * + Team Role
+             * + Jugador
+             * + Capitán de Equipo
+             * - Jugador Libre
              */
-            const roleRecipients = [
-                ...captainMembers,
-            ];
-
-            if (managerMember) {
-                roleRecipients.push(
-                    managerMember,
-                );
-            }
-
             for (
                 const member
-                of roleRecipients
+                of captainMembers
             ) {
-                const assignment =
-                    await TeamDiscordService.assignTeamRole({
+                const provisioning =
+                    await TeamDiscordService.provisionCaptainRoles({
                         guild:
                             interaction.guild,
 
                         userId:
                             member.id,
 
-                        roleId:
+                        teamRoleId:
                             teamRole.id,
 
                         teamName:
                             application.name,
                     });
 
-                /**
-                 * Only track roles that HCD Hub actually added.
-                 *
-                 * If the member somehow already had the role,
-                 * rollback must not remove something that was
-                 * not added by this approval attempt.
-                 */
-                if (assignment.assigned) {
-                    assignedRoleUserIds.push(
+                captainProvisioning.push({
+                    userId:
                         member.id,
-                    );
-                }
+
+                    changes:
+                        provisioning.changes,
+                });
+            }
+
+            /**
+             * Líder de Facción is administrative identity only.
+             *
+             * + Team Role
+             * + Líder de Facción
+             *
+             * Jugador and Jugador Libre are intentionally untouched.
+             */
+            if (managerMember) {
+                const provisioning =
+                    await TeamDiscordService.provisionFactionLeaderRoles({
+                        guild:
+                            interaction.guild,
+
+                        userId:
+                            managerMember.id,
+
+                        teamRoleId:
+                            teamRole.id,
+
+                        teamName:
+                            application.name,
+                    });
+
+                managerProvisioning = {
+                    userId:
+                        managerMember.id,
+
+                    changes:
+                        provisioning.changes,
+                };
             }
 
             /**
@@ -623,11 +653,37 @@ export const teamApplicationApproveButtonHandler = {
              *
              * provisionTeamFromApplication() already performs its
              * own PostgreSQL ROLLBACK when the DB operation fails.
+             *
+             * Reverse only changes performed by this approval attempt.
              */
-            if (teamRole) {
-                for (
-                    const userId
-                    of assignedRoleUserIds
+
+            if (
+                teamRole &&
+                managerProvisioning
+            ) {
+                const {
+                    userId,
+                    changes,
+                } = managerProvisioning;
+
+                if (
+                    changes
+                        ?.factionLeaderRoleAssigned
+                ) {
+                    await TeamDiscordService.removeFactionLeaderRole({
+                        guild:
+                            interaction.guild,
+
+                        userId,
+
+                        reason:
+                            `Rollback failed HCD application #${application.id}`,
+                    });
+                }
+
+                if (
+                    changes
+                        ?.teamRoleAssigned
                 ) {
                     await TeamDiscordService.removeTeamRole({
                         guild:
@@ -641,6 +697,87 @@ export const teamApplicationApproveButtonHandler = {
                         teamName:
                             application.name,
                     });
+                }
+            }
+
+            if (teamRole) {
+                for (
+                    const provisioning
+                    of [
+                        ...captainProvisioning,
+                    ].reverse()
+                ) {
+                    const {
+                        userId,
+                        changes,
+                    } = provisioning;
+
+                    if (
+                        changes
+                            ?.freeAgentRoleRemoved
+                    ) {
+                        try {
+                            await TeamDiscordService.assignFreeAgentRole({
+                                guild:
+                                    interaction.guild,
+
+                                userId,
+
+                                reason:
+                                    `Rollback failed HCD application #${application.id}`,
+                            });
+                        } catch {
+                            // Best-effort rollback.
+                        }
+                    }
+
+                    if (
+                        changes
+                            ?.captainRoleAssigned
+                    ) {
+                        await TeamDiscordService.removeCaptainRole({
+                            guild:
+                                interaction.guild,
+
+                            userId,
+
+                            reason:
+                                `Rollback failed HCD application #${application.id}`,
+                        });
+                    }
+
+                    if (
+                        changes
+                            ?.playerRoleAssigned
+                    ) {
+                        await TeamDiscordService.removePlayerRole({
+                            guild:
+                                interaction.guild,
+
+                            userId,
+
+                            reason:
+                                `Rollback failed HCD application #${application.id}`,
+                        });
+                    }
+
+                    if (
+                        changes
+                            ?.teamRoleAssigned
+                    ) {
+                        await TeamDiscordService.removeTeamRole({
+                            guild:
+                                interaction.guild,
+
+                            userId,
+
+                            roleId:
+                                teamRole.id,
+
+                            teamName:
+                                application.name,
+                        });
+                    }
                 }
 
                 await TeamDiscordService.deleteManagedRole({
