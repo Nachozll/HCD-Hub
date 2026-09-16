@@ -110,6 +110,80 @@ async function getTeamCaptainRole(guild) {
     });
 }
 
+/**
+ * Resolves the permanent Jugador Libre role.
+ */
+async function getFreeAgentRole(guild) {
+    return getConfiguredRole({
+        guild,
+        envName:
+            'HCD_FREE_AGENT_ROLE_ID',
+        label:
+            'Jugador Libre',
+    });
+}
+
+/**
+ * Resolves the permanent Líder de Facción role.
+ */
+async function getFactionLeaderRole(guild) {
+    return getConfiguredRole({
+        guild,
+        envName:
+            'HCD_FACTION_LEADER_ROLE_ID',
+        label:
+            'Líder de Facción',
+    });
+}
+
+/**
+ * Fetches one Discord guild member.
+ */
+async function getGuildMember({
+    guild,
+    userId,
+}) {
+    if (
+        !guild ||
+        !userId
+    ) {
+        throw new TitanBotError(
+            'Missing Discord member context',
+            ErrorTypes.VALIDATION,
+            'HCD Hub could not determine the Discord member.',
+        );
+    }
+
+    let member = null;
+
+    try {
+        member =
+            await guild.members.fetch(
+                userId,
+            );
+    } catch {
+        member = null;
+    }
+
+    if (!member) {
+        throw new TitanBotError(
+            'HCD member was not found',
+            ErrorTypes.VALIDATION,
+            'The selected member could not be found inside the HCD server.',
+        );
+    }
+
+    if (member.user.bot) {
+        throw new TitanBotError(
+            'HCD team member cannot be a bot',
+            ErrorTypes.VALIDATION,
+            'Bots cannot receive HCD competitive roster roles.',
+        );
+    }
+
+    return member;
+}
+
 class TeamDiscordService {
     /**
      * Creates the Discord role owned by HCD Hub for a competitive team.
@@ -359,20 +433,11 @@ class TeamDiscordService {
             );
         }
 
-        let member;
-
-        try {
-            member =
-                await guild.members.fetch(
-                    userId,
-                );
-        } catch {
-            throw new TitanBotError(
-                'Team member was not found in Discord',
-                ErrorTypes.VALIDATION,
-                'One of the selected team members could not be found inside the HCD server.',
-            );
-        }
+        const member =
+            await getGuildMember({
+                guild,
+                userId,
+            });
 
         if (
             member.roles.cache.has(
@@ -432,6 +497,885 @@ class TeamDiscordService {
                 ErrorTypes.VALIDATION,
                 'HCD Hub could not assign the Team Role to one of the selected members. Check the bot role hierarchy and Manage Roles permission.',
             );
+        }
+    }
+
+    /**
+     * Gives the permanent Capitán de Equipo role to a roster Captain.
+     *
+     * This method does not touch the database.
+     */
+    static async assignCaptainRole({
+        guild,
+        userId,
+    }) {
+        const member =
+            await getGuildMember({
+                guild,
+                userId,
+            });
+
+        const captainRole =
+            await getTeamCaptainRole(
+                guild,
+            );
+
+        if (
+            member.roles.cache.has(
+                captainRole.id,
+            )
+        ) {
+            return {
+                member,
+                role:
+                    captainRole,
+                assigned: false,
+                alreadyHadRole: true,
+            };
+        }
+
+        try {
+            await member.roles.add(
+                captainRole,
+                'Assigned as HCD Team Captain',
+            );
+
+            logger.info(
+                'HCD Captain role assigned',
+                {
+                    guildId:
+                        guild.id,
+
+                    userId,
+
+                    roleId:
+                        captainRole.id,
+                },
+            );
+
+            return {
+                member,
+                role:
+                    captainRole,
+                assigned: true,
+                alreadyHadRole: false,
+            };
+        } catch (error) {
+            logger.error(
+                'Failed to assign HCD Captain role',
+                {
+                    guildId:
+                        guild.id,
+
+                    userId,
+
+                    roleId:
+                        captainRole.id,
+
+                    error:
+                        error.message,
+                },
+            );
+
+            throw new TitanBotError(
+                'Failed to assign HCD Captain role',
+                ErrorTypes.VALIDATION,
+                'HCD Hub could not assign the Capitán de Equipo role. Check the bot role hierarchy.',
+            );
+        }
+    }
+
+    /**
+     * Removes the permanent Capitán de Equipo role.
+     *
+     * This is used when a player is no longer a Captain
+     * or when a provisioning operation must be rolled back.
+     */
+    static async removeCaptainRole({
+        guild,
+        userId,
+        reason =
+            'Removed from HCD Captain position',
+    }) {
+        if (
+            !guild ||
+            !userId
+        ) {
+            return {
+                removed: false,
+                reason:
+                    'missing_data',
+            };
+        }
+
+        let member = null;
+        let captainRole = null;
+
+        try {
+            member =
+                await getGuildMember({
+                    guild,
+                    userId,
+                });
+
+            captainRole =
+                await getTeamCaptainRole(
+                    guild,
+                );
+        } catch (error) {
+            logger.warn(
+                'Failed to resolve HCD Captain role removal',
+                {
+                    guildId:
+                        guild?.id,
+
+                    userId,
+
+                    error:
+                        error.message,
+                },
+            );
+
+            return {
+                removed: false,
+                reason:
+                    'resolution_failed',
+                error,
+            };
+        }
+
+        if (
+            !member.roles.cache.has(
+                captainRole.id,
+            )
+        ) {
+            return {
+                member,
+                role:
+                    captainRole,
+                removed: false,
+                reason:
+                    'role_not_present',
+            };
+        }
+
+        try {
+            await member.roles.remove(
+                captainRole,
+                reason,
+            );
+
+            logger.info(
+                'HCD Captain role removed',
+                {
+                    guildId:
+                        guild.id,
+
+                    userId,
+
+                    roleId:
+                        captainRole.id,
+                },
+            );
+
+            return {
+                member,
+                role:
+                    captainRole,
+                removed: true,
+            };
+        } catch (error) {
+            logger.warn(
+                'Failed to remove HCD Captain role',
+                {
+                    guildId:
+                        guild.id,
+
+                    userId,
+
+                    roleId:
+                        captainRole.id,
+
+                    error:
+                        error.message,
+                },
+            );
+
+            return {
+                member,
+                role:
+                    captainRole,
+                removed: false,
+                reason:
+                    'discord_error',
+                error,
+            };
+        }
+    }
+
+    /**
+     * Gives the permanent Líder de Facción role.
+     *
+     * Líder de Facción is an administrative identity and
+     * does NOT imply competitive roster membership.
+     *
+     * Jugador Libre is intentionally left untouched.
+     */
+    static async assignFactionLeaderRole({
+        guild,
+        userId,
+    }) {
+        const member =
+            await getGuildMember({
+                guild,
+                userId,
+            });
+
+        const factionLeaderRole =
+            await getFactionLeaderRole(
+                guild,
+            );
+
+        if (
+            member.roles.cache.has(
+                factionLeaderRole.id,
+            )
+        ) {
+            return {
+                member,
+                role:
+                    factionLeaderRole,
+                assigned: false,
+                alreadyHadRole: true,
+            };
+        }
+
+        try {
+            await member.roles.add(
+                factionLeaderRole,
+                'Assigned as HCD Faction Leader',
+            );
+
+            logger.info(
+                'HCD Faction Leader role assigned',
+                {
+                    guildId:
+                        guild.id,
+
+                    userId,
+
+                    roleId:
+                        factionLeaderRole.id,
+                },
+            );
+
+            return {
+                member,
+                role:
+                    factionLeaderRole,
+                assigned: true,
+                alreadyHadRole: false,
+            };
+        } catch (error) {
+            logger.error(
+                'Failed to assign HCD Faction Leader role',
+                {
+                    guildId:
+                        guild.id,
+
+                    userId,
+
+                    roleId:
+                        factionLeaderRole.id,
+
+                    error:
+                        error.message,
+                },
+            );
+
+            throw new TitanBotError(
+                'Failed to assign HCD Faction Leader role',
+                ErrorTypes.VALIDATION,
+                'HCD Hub could not assign the Líder de Facción role. Check the bot role hierarchy.',
+            );
+        }
+    }
+
+    /**
+     * Removes the permanent Líder de Facción role.
+     *
+     * Intended for faction-management changes and rollback.
+     */
+    static async removeFactionLeaderRole({
+        guild,
+        userId,
+        reason =
+            'Removed from HCD Faction Leader position',
+    }) {
+        if (
+            !guild ||
+            !userId
+        ) {
+            return {
+                removed: false,
+                reason:
+                    'missing_data',
+            };
+        }
+
+        let member = null;
+        let factionLeaderRole = null;
+
+        try {
+            member =
+                await getGuildMember({
+                    guild,
+                    userId,
+                });
+
+            factionLeaderRole =
+                await getFactionLeaderRole(
+                    guild,
+                );
+        } catch (error) {
+            logger.warn(
+                'Failed to resolve HCD Faction Leader role removal',
+                {
+                    guildId:
+                        guild?.id,
+
+                    userId,
+
+                    error:
+                        error.message,
+                },
+            );
+
+            return {
+                removed: false,
+                reason:
+                    'resolution_failed',
+                error,
+            };
+        }
+
+        if (
+            !member.roles.cache.has(
+                factionLeaderRole.id,
+            )
+        ) {
+            return {
+                member,
+                role:
+                    factionLeaderRole,
+                removed: false,
+                reason:
+                    'role_not_present',
+            };
+        }
+
+        try {
+            await member.roles.remove(
+                factionLeaderRole,
+                reason,
+            );
+
+            logger.info(
+                'HCD Faction Leader role removed',
+                {
+                    guildId:
+                        guild.id,
+
+                    userId,
+
+                    roleId:
+                        factionLeaderRole.id,
+                },
+            );
+
+            return {
+                member,
+                role:
+                    factionLeaderRole,
+                removed: true,
+            };
+        } catch (error) {
+            logger.warn(
+                'Failed to remove HCD Faction Leader role',
+                {
+                    guildId:
+                        guild.id,
+
+                    userId,
+
+                    roleId:
+                        factionLeaderRole.id,
+
+                    error:
+                        error.message,
+                },
+            );
+
+            return {
+                member,
+                role:
+                    factionLeaderRole,
+                removed: false,
+                reason:
+                    'discord_error',
+                error,
+            };
+        }
+    }
+
+    /**
+     * Removes Jugador Libre from a competitive roster member.
+     *
+     * This should only be called after the user is confirmed
+     * to be entering an HCD competitive roster.
+     */
+    static async removeFreeAgentRole({
+        guild,
+        userId,
+        reason =
+            'Joined an HCD competitive roster',
+    }) {
+        if (
+            !guild ||
+            !userId
+        ) {
+            return {
+                removed: false,
+                reason:
+                    'missing_data',
+            };
+        }
+
+        let member = null;
+        let freeAgentRole = null;
+
+        try {
+            member =
+                await getGuildMember({
+                    guild,
+                    userId,
+                });
+
+            freeAgentRole =
+                await getFreeAgentRole(
+                    guild,
+                );
+        } catch (error) {
+            logger.warn(
+                'Failed to resolve HCD Free Agent role removal',
+                {
+                    guildId:
+                        guild?.id,
+
+                    userId,
+
+                    error:
+                        error.message,
+                },
+            );
+
+            return {
+                removed: false,
+                reason:
+                    'resolution_failed',
+                error,
+            };
+        }
+
+        if (
+            !member.roles.cache.has(
+                freeAgentRole.id,
+            )
+        ) {
+            return {
+                member,
+                role:
+                    freeAgentRole,
+                removed: false,
+                reason:
+                    'role_not_present',
+            };
+        }
+
+        try {
+            await member.roles.remove(
+                freeAgentRole,
+                reason,
+            );
+
+            logger.info(
+                'HCD Free Agent role removed',
+                {
+                    guildId:
+                        guild.id,
+
+                    userId,
+
+                    roleId:
+                        freeAgentRole.id,
+                },
+            );
+
+            return {
+                member,
+                role:
+                    freeAgentRole,
+                removed: true,
+            };
+        } catch (error) {
+            logger.warn(
+                'Failed to remove HCD Free Agent role',
+                {
+                    guildId:
+                        guild.id,
+
+                    userId,
+
+                    roleId:
+                        freeAgentRole.id,
+
+                    error:
+                        error.message,
+                },
+            );
+
+            return {
+                member,
+                role:
+                    freeAgentRole,
+                removed: false,
+                reason:
+                    'discord_error',
+                error,
+            };
+        }
+    }
+
+    /**
+     * Restores Jugador Libre to a member.
+     *
+     * The caller must first confirm that the user no longer
+     * belongs to any competitive HCD roster.
+     */
+    static async assignFreeAgentRole({
+        guild,
+        userId,
+        reason =
+            'No longer belongs to an HCD competitive roster',
+    }) {
+        const member =
+            await getGuildMember({
+                guild,
+                userId,
+            });
+
+        const freeAgentRole =
+            await getFreeAgentRole(
+                guild,
+            );
+
+        if (
+            member.roles.cache.has(
+                freeAgentRole.id,
+            )
+        ) {
+            return {
+                member,
+                role:
+                    freeAgentRole,
+                assigned: false,
+                alreadyHadRole: true,
+            };
+        }
+
+        try {
+            await member.roles.add(
+                freeAgentRole,
+                reason,
+            );
+
+            logger.info(
+                'HCD Free Agent role assigned',
+                {
+                    guildId:
+                        guild.id,
+
+                    userId,
+
+                    roleId:
+                        freeAgentRole.id,
+                },
+            );
+
+            return {
+                member,
+                role:
+                    freeAgentRole,
+                assigned: true,
+                alreadyHadRole: false,
+            };
+        } catch (error) {
+            logger.error(
+                'Failed to assign HCD Free Agent role',
+                {
+                    guildId:
+                        guild.id,
+
+                    userId,
+
+                    roleId:
+                        freeAgentRole.id,
+
+                    error:
+                        error.message,
+                },
+            );
+
+            throw new TitanBotError(
+                'Failed to assign HCD Free Agent role',
+                ErrorTypes.VALIDATION,
+                'HCD Hub could not assign the Jugador Libre role. Check the bot role hierarchy.',
+            );
+        }
+    }
+
+    /**
+     * Synchronizes the Discord identity of a Captain
+     * who is entering an HCD competitive roster.
+     *
+     * Result:
+     *
+     * + Team Role
+     * + Capitán de Equipo
+     * - Jugador Libre
+     *
+     * The return value records exactly which changes were
+     * performed so the caller can roll them back safely.
+     */
+    static async provisionCaptainRoles({
+        guild,
+        userId,
+        teamRoleId,
+        teamName = null,
+    }) {
+        const changes = {
+            teamRoleAssigned: false,
+            captainRoleAssigned: false,
+            freeAgentRoleRemoved: false,
+        };
+
+        try {
+            const teamRoleResult =
+                await this.assignTeamRole({
+                    guild,
+                    userId,
+                    roleId:
+                        teamRoleId,
+                    teamName,
+                });
+
+            changes.teamRoleAssigned =
+                teamRoleResult.assigned;
+
+            const captainRoleResult =
+                await this.assignCaptainRole({
+                    guild,
+                    userId,
+                });
+
+            changes.captainRoleAssigned =
+                captainRoleResult.assigned;
+
+            const freeAgentResult =
+                await this.removeFreeAgentRole({
+                    guild,
+                    userId,
+                    reason:
+                        teamName
+                            ? `Joined HCD team ${teamName}`
+                            : 'Joined an HCD competitive roster',
+                });
+
+            if (
+                freeAgentResult.reason ===
+                'discord_error'
+            ) {
+                throw new TitanBotError(
+                    'Failed to remove HCD Free Agent role',
+                    ErrorTypes.VALIDATION,
+                    'HCD Hub could not remove Jugador Libre from the new roster member.',
+                );
+            }
+
+            if (
+                freeAgentResult.reason ===
+                'resolution_failed'
+            ) {
+                throw new TitanBotError(
+                    'Failed to resolve HCD Free Agent role',
+                    ErrorTypes.VALIDATION,
+                    'HCD Hub could not resolve the Jugador Libre role.',
+                );
+            }
+
+            changes.freeAgentRoleRemoved =
+                freeAgentResult.removed;
+
+            logger.info(
+                'HCD Captain Discord roles provisioned',
+                {
+                    guildId:
+                        guild.id,
+
+                    userId,
+                    teamRoleId,
+                    teamName,
+                    changes,
+                },
+            );
+
+            return {
+                provisioned: true,
+                changes,
+            };
+        } catch (error) {
+            /**
+             * Roll back only changes performed by this call.
+             */
+            if (
+                changes.freeAgentRoleRemoved
+            ) {
+                try {
+                    await this.assignFreeAgentRole({
+                        guild,
+                        userId,
+                        reason:
+                            'Rollback HCD Captain provisioning',
+                    });
+                } catch {
+                    // Best-effort rollback.
+                }
+            }
+
+            if (
+                changes.captainRoleAssigned
+            ) {
+                await this.removeCaptainRole({
+                    guild,
+                    userId,
+                    reason:
+                        'Rollback HCD Captain provisioning',
+                });
+            }
+
+            if (
+                changes.teamRoleAssigned
+            ) {
+                await this.removeTeamRole({
+                    guild,
+                    userId,
+                    roleId:
+                        teamRoleId,
+                    teamName,
+                });
+            }
+
+            throw error;
+        }
+    }
+
+    /**
+     * Synchronizes the Discord identity of a
+     * Líder de Facción.
+     *
+     * Result:
+     *
+     * + Team Role
+     * + Líder de Facción
+     *
+     * Jugador Libre is intentionally NOT touched because
+     * Líder de Facción is not a competitive roster position.
+     */
+    static async provisionFactionLeaderRoles({
+        guild,
+        userId,
+        teamRoleId,
+        teamName = null,
+    }) {
+        const changes = {
+            teamRoleAssigned: false,
+            factionLeaderRoleAssigned: false,
+        };
+
+        try {
+            const teamRoleResult =
+                await this.assignTeamRole({
+                    guild,
+                    userId,
+                    roleId:
+                        teamRoleId,
+                    teamName,
+                });
+
+            changes.teamRoleAssigned =
+                teamRoleResult.assigned;
+
+            const factionLeaderResult =
+                await this.assignFactionLeaderRole({
+                    guild,
+                    userId,
+                });
+
+            changes.factionLeaderRoleAssigned =
+                factionLeaderResult.assigned;
+
+            logger.info(
+                'HCD Faction Leader Discord roles provisioned',
+                {
+                    guildId:
+                        guild.id,
+
+                    userId,
+                    teamRoleId,
+                    teamName,
+                    changes,
+                },
+            );
+
+            return {
+                provisioned: true,
+                changes,
+            };
+        } catch (error) {
+            if (
+                changes.factionLeaderRoleAssigned
+            ) {
+                await this.removeFactionLeaderRole({
+                    guild,
+                    userId,
+                    reason:
+                        'Rollback HCD Faction Leader provisioning',
+                });
+            }
+
+            if (
+                changes.teamRoleAssigned
+            ) {
+                await this.removeTeamRole({
+                    guild,
+                    userId,
+                    roleId:
+                        teamRoleId,
+                    teamName,
+                });
+            }
+
+            throw error;
         }
     }
 
