@@ -14,6 +14,7 @@ import {
     getTeamInviteById,
     acceptTeamInvite,
     declineTeamInvite,
+    addTeamMembersDirect,
     removeTeamMember,
     moveTeamMember,
     expireTeamInvites,
@@ -425,7 +426,8 @@ class TeamService {
             },
         };
     }
-        /**
+
+    /**
      * Creates a new HCD team.
      */
     static async create(data) {
@@ -483,149 +485,147 @@ class TeamService {
     }
 
     /**
-     * Returns an HCD team.
+     * Updates an existing HCD team.
      */
-    /**
- * Updates an existing HCD team.
- */
-static async update({
-    guildId,
-    teamId,
-    name = undefined,
-    tag = undefined,
-    managerId = undefined,
-    roleId = undefined,
-    discordUrl = undefined,
-    logoUrl = undefined,
-    buttonEmoji = undefined,
-}) {
-    try {
-        const team = await this.get(
-            guildId,
-            teamId,
-        );
+    static async update({
+        guildId,
+        teamId,
+        name = undefined,
+        tag = undefined,
+        managerId = undefined,
+        roleId = undefined,
+        discordUrl = undefined,
+        logoUrl = undefined,
+        buttonEmoji = undefined,
+    }) {
+        try {
+            const team = await this.get(
+                guildId,
+                teamId,
+            );
 
-        const updates = {};
+            const updates = {};
 
-        if (name !== undefined) {
-            const cleanName = String(name).trim();
+            if (name !== undefined) {
+                const cleanName = String(name).trim();
 
-            if (
-                cleanName.length < 2 ||
-                cleanName.length > 100
-            ) {
+                if (
+                    cleanName.length < 2 ||
+                    cleanName.length > 100
+                ) {
+                    throw createError(
+                        'Invalid team name length',
+                        ErrorTypes.VALIDATION,
+                        'Team name must contain between 2 and 100 characters.',
+                    );
+                }
+
+                const existingTeam =
+                    await getTeamByName(
+                        guildId,
+                        cleanName,
+                    );
+
+                if (
+                    existingTeam &&
+                    Number(existingTeam.id) !== Number(team.id)
+                ) {
+                    throw createError(
+                        'Team name already exists',
+                        ErrorTypes.VALIDATION,
+                        'Another HCD team already uses this name.',
+                    );
+                }
+
+                updates.name = cleanName;
+            }
+
+            if (tag !== undefined) {
+                const cleanTag =
+                    tag === null
+                        ? null
+                        : String(tag).trim();
+
+                if (
+                    cleanTag &&
+                    cleanTag.length > 20
+                ) {
+                    throw createError(
+                        'Invalid team tag length',
+                        ErrorTypes.VALIDATION,
+                        'Team tag cannot contain more than 20 characters.',
+                    );
+                }
+
+                updates.tag = cleanTag || null;
+            }
+
+            if (managerId !== undefined) {
+                updates.managerId = managerId;
+            }
+
+            if (roleId !== undefined) {
+                updates.roleId = roleId;
+            }
+
+            if (discordUrl !== undefined) {
+                updates.discordUrl =
+                    discordUrl || null;
+            }
+
+            if (logoUrl !== undefined) {
+                updates.logoUrl =
+                    logoUrl || null;
+            }
+
+            if (buttonEmoji !== undefined) {
+                updates.buttonEmoji =
+                    buttonEmoji || null;
+            }
+
+            if (!Object.keys(updates).length) {
                 throw createError(
-                    'Invalid team name length',
+                    'No team updates provided',
                     ErrorTypes.VALIDATION,
-                    'Team name must contain between 2 and 100 characters.',
+                    'You must provide at least one field to update.',
                 );
             }
 
-            const existingTeam =
-                await getTeamByName(
+            const updatedTeam =
+                await updateTeam(
                     guildId,
-                    cleanName,
+                    teamId,
+                    updates,
                 );
 
-            if (
-                existingTeam &&
-                Number(existingTeam.id) !== Number(team.id)
-            ) {
+            if (!updatedTeam) {
                 throw createError(
-                    'Team name already exists',
+                    'Team update failed',
                     ErrorTypes.VALIDATION,
-                    'Another HCD team already uses this name.',
+                    'The team could not be updated.',
                 );
             }
 
-            updates.name = cleanName;
-        }
-
-        if (tag !== undefined) {
-            const cleanTag =
-                tag === null
-                    ? null
-                    : String(tag).trim();
-
-            if (
-                cleanTag &&
-                cleanTag.length > 20
-            ) {
-                throw createError(
-                    'Invalid team tag length',
-                    ErrorTypes.VALIDATION,
-                    'Team tag cannot contain more than 20 characters.',
-                );
-            }
-
-            updates.tag = cleanTag || null;
-        }
-
-        if (managerId !== undefined) {
-            updates.managerId = managerId;
-        }
-
-        if (roleId !== undefined) {
-            updates.roleId = roleId;
-        }
-
-        if (discordUrl !== undefined) {
-            updates.discordUrl =
-                discordUrl || null;
-        }
-
-        if (logoUrl !== undefined) {
-            updates.logoUrl =
-                logoUrl || null;
-        }
-
-        if (buttonEmoji !== undefined) {
-            updates.buttonEmoji =
-                buttonEmoji || null;
-        }
-
-        if (!Object.keys(updates).length) {
-            throw createError(
-                'No team updates provided',
-                ErrorTypes.VALIDATION,
-                'You must provide at least one field to update.',
-            );
-        }
-
-        const updatedTeam =
-            await updateTeam(
+            logger.info('HCD team updated', {
                 guildId,
                 teamId,
-                updates,
-            );
+                updatedFields:
+                    Object.keys(updates),
+            });
 
-        if (!updatedTeam) {
-            throw createError(
-                'Team update failed',
-                ErrorTypes.VALIDATION,
-                'The team could not be updated.',
+            return updatedTeam;
+        } catch (error) {
+            return this.handleError(
+                'update team',
+                error,
+                {
+                    guildId,
+                    teamId,
+                },
             );
         }
-
-        logger.info('HCD team updated', {
-            guildId,
-            teamId,
-            updatedFields:
-                Object.keys(updates),
-        });
-
-        return updatedTeam;
-    } catch (error) {
-        return this.handleError(
-            'update team',
-            error,
-            {
-                guildId,
-                teamId,
-            },
-        );
     }
-}
+
     /**
      * Deactivates an HCD team, clears its competitive roster, and
      * cancels pending invitations through one atomic DB transaction.
@@ -1033,6 +1033,165 @@ static async update({
                     guildId,
                     inviteId,
                     userId,
+                },
+            );
+        }
+    }
+
+    /**
+     * Adds multiple players directly to an HCD roster.
+     *
+     * This bypasses the normal invitation flow and is intended only for
+     * trusted administrative processes such as approved team applications.
+     */
+    static async addMembersDirect({
+        guildId,
+        teamId,
+        members = [],
+    }) {
+        try {
+            if (!guildId || !teamId) {
+                throw createError(
+                    'Missing direct roster context',
+                    ErrorTypes.VALIDATION,
+                    'Guild and team are required to add roster members.',
+                    {
+                        guildId,
+                        teamId,
+                    },
+                );
+            }
+
+            if (
+                !Array.isArray(members) ||
+                members.length === 0
+            ) {
+                throw createError(
+                    'Missing direct roster members',
+                    ErrorTypes.VALIDATION,
+                    'At least one roster member is required.',
+                    {
+                        guildId,
+                        teamId,
+                    },
+                );
+            }
+
+            const normalizedMembers =
+                members.map((member) => {
+                    if (!member?.userId) {
+                        throw createError(
+                            'Invalid direct roster member',
+                            ErrorTypes.VALIDATION,
+                            'Every roster member must have a valid Discord user.',
+                            {
+                                guildId,
+                                teamId,
+                            },
+                        );
+                    }
+
+                    this.validatePosition(
+                        member.position,
+                    );
+
+                    return {
+                        userId:
+                            String(
+                                member.userId,
+                            ).trim(),
+                        position:
+                            member.position,
+                    };
+                });
+
+            const uniqueUserIds =
+                new Set(
+                    normalizedMembers.map(
+                        (member) =>
+                            member.userId,
+                    ),
+                );
+
+            if (
+                uniqueUserIds.size !==
+                normalizedMembers.length
+            ) {
+                throw createError(
+                    'Duplicate direct roster member',
+                    ErrorTypes.VALIDATION,
+                    'The same player cannot be added to the roster more than once.',
+                    {
+                        guildId,
+                        teamId,
+                    },
+                );
+            }
+
+            const result =
+                await addTeamMembersDirect({
+                    guildId,
+                    teamId,
+                    members:
+                        normalizedMembers,
+                });
+
+            if (!result.added) {
+                const messages = {
+                    already_in_team:
+                        'One or more selected players already belong to an HCD team.',
+                    slot_full:
+                        'There is not enough space in the requested roster position.',
+                    roster_full:
+                        'There is not enough space in the team roster.',
+                };
+
+                throw createError(
+                    `Direct roster addition failed: ${result.reason}`,
+                    ErrorTypes.VALIDATION,
+                    messages[result.reason] ||
+                        'The selected players could not be added to the roster.',
+                    {
+                        guildId,
+                        teamId,
+                        reason:
+                            result.reason,
+                        memberships:
+                            result.memberships,
+                        position:
+                            result.position,
+                    },
+                );
+            }
+
+            logger.info(
+                'HCD team members added directly',
+                {
+                    guildId,
+                    teamId,
+                    memberCount:
+                        result.members?.length ||
+                        0,
+                    userIds:
+                        normalizedMembers.map(
+                            (member) =>
+                                member.userId,
+                        ),
+                },
+            );
+
+            return result;
+        } catch (error) {
+            return this.handleError(
+                'add team members directly',
+                error,
+                {
+                    guildId,
+                    teamId,
+                    memberCount:
+                        Array.isArray(members)
+                            ? members.length
+                            : 0,
                 },
             );
         }
