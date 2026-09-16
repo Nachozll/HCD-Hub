@@ -11,6 +11,7 @@ import TeamService, {
     TEAM_LIMITS,
 } from '../../services/teamService.js';
 
+import TeamDiscordService from '../../services/teamDiscordService.js';
 import TeamPanelService from '../../services/teamPanelService.js';
 import TeamApplicationPanelService from '../../services/teamApplicationPanelService.js';
 
@@ -600,12 +601,17 @@ async function handleCreate(interaction) {
                 teamTag: tag,
             });
 
-        teamRole =
-            await createManagedTeamRole({
-                interaction,
-                name,
-                tag,
-            });
+       teamRole =
+    await TeamDiscordService.createManagedRole({
+        guild:
+            interaction.guild,
+
+        name,
+        tag,
+
+        createdBy:
+            interaction.user.tag,
+    });
 
         team = await TeamService.create({
             guildId: interaction.guildId,
