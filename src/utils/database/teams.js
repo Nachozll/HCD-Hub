@@ -1270,3 +1270,362 @@ export async function cancelPendingTeamInvites(guildId, teamId) {
 
     return result.rowCount || 0;
 }
+
+/**
+ * Atomically provisions an official HCD team from a pending team application.
+ *
+ * The application, team, and Captain roster are committed together.
+ * Discord-side role creation/assignment must be handled outside this
+ * transaction and rolled back by the caller if this operation fails.
+ */
+export async function provisionTeamFromApplication({
+    guildId,
+    applicationId,
+    reviewedBy,
+    roleId,
+    reviewReason = null,
+}) {
+    ensureDatabaseAvailable();
+
+    if (!guildId || !applicationId || !reviewedBy || !roleId) {
+        throw new Error(
+            'Guild, application, reviewer, and Team Role are required',
+        );
+    }
+
+    const connection = await pgDb.pool.connect();
+
+    try {
+        await connection.query('BEGIN');
+
+        const applicationResult =
+            await connection.query(
+                `SELECT *
+                 FROM ${t.hcd_team_applications}
+                 WHERE guild_id = $1
+                   AND id = $2
+                 FOR UPDATE`,
+                [
+                    guildId,
+                    applicationId,
+                ],
+            );
+
+        const application =
+            applicationResult.rows[0];
+
+        if (!application) {
+            throw new Error(
+                'Team application not found',
+            );
+        }
+
+        if (
+            application.status !==
+            'pending'
+        ) {
+            throw new Error(
+                'Team application is no longer pending',
+            );
+        }
+
+        const name =
+            String(
+                application.name || '',
+            ).trim();
+
+        const tag =
+            application.tag
+                ? String(
+                    application.tag,
+                ).trim()
+                : null;
+
+        const managerId =
+            application.manager_id
+                ? String(
+                    application.manager_id,
+                ).trim()
+                : null;
+
+        const captainIds =
+            Array.isArray(
+                application.captain_ids,
+            )
+                ? [
+                    ...new Set(
+                        application.captain_ids
+                            .map(
+                                id =>
+                                    String(
+                                        id || '',
+                                    ).trim(),
+                            )
+                            .filter(Boolean),
+                    ),
+                ]
+                : [];
+
+        if (
+            name.length < 2 ||
+            name.length > 100
+        ) {
+            throw new Error(
+                'Invalid team application name',
+            );
+        }
+
+        if (
+            tag &&
+            tag.length > 20
+        ) {
+            throw new Error(
+                'Invalid team application tag',
+            );
+        }
+
+        if (
+            captainIds.length < 1 ||
+            captainIds.length >
+                POSITION_LIMITS.captain
+        ) {
+            throw new Error(
+                'Team application must contain 1 or 2 Captains',
+            );
+        }
+
+        if (
+            managerId &&
+            captainIds.includes(
+                managerId,
+            )
+        ) {
+            throw new Error(
+                'Líder de Facción cannot also be a Captain',
+            );
+        }
+
+        const existingTeamResult =
+            await connection.query(
+                `SELECT *
+                 FROM ${t.hcd_teams}
+                 WHERE guild_id = $1
+                   AND LOWER(name) = LOWER($2)
+                 LIMIT 1
+                 FOR UPDATE`,
+                [
+                    guildId,
+                    name,
+                ],
+            );
+
+        if (
+            existingTeamResult.rows[0]
+        ) {
+            throw new Error(
+                'A team with this name already exists',
+            );
+        }
+
+        const existingMembershipResult =
+            await connection.query(
+                `SELECT *
+                 FROM ${t.hcd_team_members}
+                 WHERE guild_id = $1
+                   AND user_id = ANY($2::text[])
+                 FOR UPDATE`,
+                [
+                    guildId,
+                    captainIds,
+                ],
+            );
+
+        if (
+            existingMembershipResult.rows
+                .length > 0
+        ) {
+            const error =
+                new Error(
+                    'One or more Captains already belong to an HCD team',
+                );
+
+            error.code =
+                'CAPTAIN_ALREADY_IN_TEAM';
+
+            error.memberships =
+                existingMembershipResult.rows;
+
+            throw error;
+        }
+
+        const teamResult =
+            await connection.query(
+                `INSERT INTO ${t.hcd_teams}
+                    (
+                        guild_id,
+                        name,
+                        tag,
+                        manager_id,
+                        role_id,
+                        discord_url,
+                        logo_url,
+                        button_emoji
+                    )
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)
+                 RETURNING *`,
+                [
+                    guildId,
+                    name,
+                    tag,
+                    managerId,
+                    roleId,
+                    application.discord_url ||
+                        null,
+                    application.logo_url ||
+                        null,
+                ],
+            );
+
+        const team =
+            teamResult.rows[0];
+
+        if (!team) {
+            throw new Error(
+                'Failed to create official HCD team',
+            );
+        }
+
+        const insertedMembers = [];
+
+        for (
+            const captainId
+            of captainIds
+        ) {
+            const memberResult =
+                await connection.query(
+                    `INSERT INTO ${t.hcd_team_members}
+                        (
+                            guild_id,
+                            team_id,
+                            user_id,
+                            position
+                        )
+                     VALUES ($1, $2, $3, 'captain')
+                     RETURNING *`,
+                    [
+                        guildId,
+                        team.id,
+                        captainId,
+                    ],
+                );
+
+            insertedMembers.push(
+                memberResult.rows[0],
+            );
+        }
+
+        await connection.query(
+            `UPDATE ${t.hcd_team_invites}
+             SET status = 'cancelled'
+             WHERE guild_id = $1
+               AND user_id = ANY($2::text[])
+               AND status = 'pending'`,
+            [
+                guildId,
+                captainIds,
+            ],
+        );
+
+        const approvalResult =
+            await connection.query(
+                `UPDATE ${t.hcd_team_applications}
+                 SET status = 'approved',
+                     reviewed_by = $1,
+                     review_reason = $2,
+                     reviewed_at = CURRENT_TIMESTAMP,
+                     team_id = $3
+                 WHERE guild_id = $4
+                   AND id = $5
+                   AND status = 'pending'
+                 RETURNING *`,
+                [
+                    reviewedBy,
+                    reviewReason
+                        ? String(
+                            reviewReason,
+                        ).trim()
+                        : null,
+                    team.id,
+                    guildId,
+                    applicationId,
+                ],
+            );
+
+        const approvedApplication =
+            approvalResult.rows[0];
+
+        if (!approvedApplication) {
+            throw new Error(
+                'Failed to mark team application as approved',
+            );
+        }
+
+        await connection.query(
+            'COMMIT',
+        );
+
+        logger.info(
+            'HCD team application provisioned atomically',
+            {
+                guildId,
+                applicationId,
+                teamId: team.id,
+                reviewedBy,
+                roleId,
+                captainIds,
+            },
+        );
+
+        return {
+            provisioned: true,
+            team,
+            members:
+                insertedMembers,
+            application:
+                approvedApplication,
+        };
+    } catch (error) {
+        try {
+            await connection.query(
+                'ROLLBACK',
+            );
+        } catch (rollbackError) {
+            logger.error(
+                'Failed to rollback HCD team application provisioning transaction',
+                {
+                    guildId,
+                    applicationId,
+                    reviewedBy,
+                    error:
+                        rollbackError.message,
+                },
+            );
+        }
+
+        logger.error(
+            'Failed to provision HCD team application',
+            {
+                guildId,
+                applicationId,
+                reviewedBy,
+                roleId,
+                error:
+                    error.message,
+            },
+        );
+
+        throw error;
+    } finally {
+        connection.release();
+    }
+}
