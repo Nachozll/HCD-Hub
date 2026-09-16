@@ -1,3 +1,9 @@
+import {
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+} from 'discord.js';
+
 import TeamApplicationSessionService
     from '../services/teamApplicationSessionService.js';
 
@@ -61,8 +67,27 @@ export const teamApplicationManagerHandler = {
 
         /*
          * Manager saved successfully.
-         * The next stage will handle the team logo.
+         * Continue to the team logo stage.
          */
+        const logoButton =
+            new ButtonBuilder()
+                .setCustomId(
+                    'team_application_logo',
+                )
+                .setLabel(
+                    'Añadir Logo',
+                )
+                .setEmoji('🖼️')
+                .setStyle(
+                    ButtonStyle.Primary,
+                );
+
+        const row =
+            new ActionRowBuilder()
+                .addComponents(
+                    logoButton,
+                );
+
         await interaction.update({
             embeds: [
                 {
@@ -80,6 +105,8 @@ export const teamApplicationManagerHandler = {
                         '',
                         '🖼️ El logo será utilizado para identificar a tu equipo dentro de HCD',
                         '',
+                        'Pulsa **Añadir Logo** para continuar',
+                        '',
                         '✅ **Líder de Facción guardado correctamente**',
                     ].join('\n'),
 
@@ -90,7 +117,7 @@ export const teamApplicationManagerHandler = {
                 },
             ],
 
-            components: [],
+            components: [row],
         });
     },
 };
