@@ -35,55 +35,97 @@ function getManagedTeamRoleName(
 }
 
 /**
- * Resolves the permanent Equipos separator role configured in Railway.
+ * Resolves a permanent Discord role configured
+ * through a Railway environment variable.
  */
-async function getTeamsSeparatorRole(guild) {
-    const separatorRoleId =
-        process.env
-            .HCD_TEAMS_SEPARATOR_ROLE_ID;
+async function getConfiguredRole({
+    guild,
+    envName,
+    label,
+}) {
+    const roleId =
+        process.env[envName];
 
-    if (!separatorRoleId) {
+    if (!roleId) {
         throw new TitanBotError(
-            'HCD teams separator role is not configured',
+            `${label} role is not configured`,
             ErrorTypes.VALIDATION,
-            'HCD_TEAMS_SEPARATOR_ROLE_ID is not configured. An Administrator must configure the Equipos separator role before creating teams.',
+            `${envName} is not configured. An Administrator must configure the ${label} role before creating teams.`,
         );
     }
 
-    let separatorRole =
+    let role =
         guild.roles.cache.get(
-            separatorRoleId,
+            roleId,
         );
 
-    if (!separatorRole) {
+    if (!role) {
         try {
-            separatorRole =
+            role =
                 await guild.roles.fetch(
-                    separatorRoleId,
+                    roleId,
                 );
         } catch {
-            separatorRole = null;
+            role = null;
         }
     }
 
-    if (!separatorRole) {
+    if (!role) {
         throw new TitanBotError(
-            'HCD teams separator role was not found',
+            `${label} role was not found`,
             ErrorTypes.VALIDATION,
-            'HCD Hub could not find the configured Equipos separator role. Check HCD_TEAMS_SEPARATOR_ROLE_ID.',
+            `HCD Hub could not find the configured ${label} role. Check ${envName}.`,
         );
     }
 
-    return separatorRole;
+    return role;
+}
+
+/**
+ * Resolves the permanent Equipos separator role.
+ */
+async function getTeamsSeparatorRole(guild) {
+    return getConfiguredRole({
+        guild,
+        envName:
+            'HCD_TEAMS_SEPARATOR_ROLE_ID',
+        label:
+            'Equipos separator',
+    });
+}
+
+/**
+ * Resolves the permanent Capitán de Equipo role.
+ *
+ * Every automatically generated Team Role must
+ * be positioned directly below this role.
+ */
+async function getTeamCaptainRole(guild) {
+    return getConfiguredRole({
+        guild,
+        envName:
+            'HCD_TEAM_CAPTAIN_ROLE_ID',
+        label:
+            'Capitán de Equipo',
+    });
 }
 
 class TeamDiscordService {
     /**
-     * Creates the Discord role owned by HCD Hub for a competitive team
-     * and positions it directly below the Equipos separator.
+     * Creates the Discord role owned by HCD Hub for a competitive team.
      *
-     * If role creation or positioning fails, the new role is deleted
-     * automatically whenever possible.
+     * Expected hierarchy:
+     *
+     * Equipos separator
+     * Líder de Facción
+     * Capitán de Equipo
+     * Team Roles...
+     *
+     * Every new Team Role is positioned directly
+     * below Capitán de Equipo.
+     *
+     * If role creation or positioning fails, the
+     * new role is deleted automatically whenever possible.
      */
     static async createManagedRole({
         guild,
@@ -104,6 +146,11 @@ class TeamDiscordService {
                 guild,
             );
 
+        const captainRole =
+            await getTeamCaptainRole(
+                guild,
+            );
+
         const botMember =
             guild.members.me ??
             await guild.members.fetchMe();
@@ -121,6 +168,10 @@ class TeamDiscordService {
             );
         }
 
+        /**
+         * HCD Hub must be above both permanent
+         * roles used by the team hierarchy.
+         */
         if (
             botMember.roles.highest.position <=
             separatorRole.position
@@ -129,6 +180,35 @@ class TeamDiscordService {
                 'HCD Hub role is below the teams separator',
                 ErrorTypes.PERMISSION,
                 'The HCD Hub bot role must be above the Equipos separator role so it can position competitive team roles.',
+            );
+        }
+
+        if (
+            botMember.roles.highest.position <=
+            captainRole.position
+        ) {
+            throw new TitanBotError(
+                'HCD Hub role is below Capitán de Equipo',
+                ErrorTypes.PERMISSION,
+                'The HCD Hub bot role must be above Capitán de Equipo so it can position competitive Team Roles.',
+            );
+        }
+
+        /**
+         * Capitán de Equipo must itself be located
+         * underneath the Equipos separator.
+         *
+         * This protects the hierarchy from accidental
+         * manual changes in Discord.
+         */
+        if (
+            captainRole.position >=
+            separatorRole.position
+        ) {
+            throw new TitanBotError(
+                'Invalid HCD team role hierarchy',
+                ErrorTypes.VALIDATION,
+                'Capitán de Equipo must be positioned below the Equipos separator before HCD Hub can create Team Roles.',
             );
         }
 
@@ -153,33 +233,59 @@ class TeamDiscordService {
                     reason,
                 });
 
-            // Role positions can change immediately after creating
-            // a new Discord role, so resolve the separator again.
-            const refreshedSeparator =
-                await getTeamsSeparatorRole(
+            /**
+             * Discord role positions may shift immediately
+             * after creating another role.
+             *
+             * Resolve Capitán de Equipo again so we use
+             * its current position.
+             */
+            const refreshedCaptainRole =
+                await getTeamCaptainRole(
                     guild,
                 );
 
+            /**
+             * Position the newly-created Team Role
+             * immediately below Capitán de Equipo.
+             *
+             * Discord positions count upward from @everyone,
+             * therefore one position below means position - 1.
+             */
             await teamRole.setPosition(
                 Math.max(
-                    refreshedSeparator.position -
+                    refreshedCaptainRole.position -
                         1,
                     1,
                 ),
                 {
                     reason:
-                        'Position HCD team role below Equipos separator',
+                        'Position HCD Team Role below Capitán de Equipo',
                 },
             );
 
             logger.info(
                 'HCD managed team role created',
                 {
-                    guildId: guild.id,
-                    roleId: teamRole.id,
+                    guildId:
+                        guild.id,
+
+                    roleId:
+                        teamRole.id,
+
                     roleName:
                         teamRole.name,
+
                     createdBy,
+
+                    separatorRoleId:
+                        separatorRole.id,
+
+                    captainRoleId:
+                        refreshedCaptainRole.id,
+
+                    finalPosition:
+                        teamRole.position,
                 },
             );
 
@@ -198,11 +304,18 @@ class TeamDiscordService {
             logger.error(
                 'Failed to create or position HCD team role',
                 {
-                    guildId: guild.id,
+                    guildId:
+                        guild.id,
+
                     userId:
                         createdBy || null,
+
                     separatorRoleId:
                         separatorRole.id,
+
+                    captainRoleId:
+                        captainRole.id,
+
                     error:
                         error.message,
                 },
@@ -218,7 +331,7 @@ class TeamDiscordService {
             throw new TitanBotError(
                 'Failed to create HCD team role',
                 ErrorTypes.VALIDATION,
-                'HCD Hub could not create and position the Team Role. Make sure the bot has Manage Roles and that the HCD Hub role is above the Equipos separator.',
+                'HCD Hub could not create and position the Team Role. Make sure the bot has Manage Roles and that HCD Hub is above the HCD team hierarchy.',
             );
         }
     }
@@ -284,7 +397,9 @@ class TeamDiscordService {
             logger.info(
                 'HCD team role assigned',
                 {
-                    guildId: guild.id,
+                    guildId:
+                        guild.id,
+
                     userId,
                     roleId,
                     teamName,
@@ -300,10 +415,13 @@ class TeamDiscordService {
             logger.error(
                 'Failed to assign HCD team role',
                 {
-                    guildId: guild.id,
+                    guildId:
+                        guild.id,
+
                     userId,
                     roleId,
                     teamName,
+
                     error:
                         error.message,
                 },
@@ -352,9 +470,12 @@ class TeamDiscordService {
             logger.warn(
                 'Failed to fetch member while removing HCD team role',
                 {
-                    guildId: guild.id,
+                    guildId:
+                        guild.id,
+
                     userId,
                     roleId,
+
                     error:
                         error.message,
                 },
@@ -396,10 +517,13 @@ class TeamDiscordService {
             logger.warn(
                 'Failed to remove HCD team role',
                 {
-                    guildId: guild.id,
+                    guildId:
+                        guild.id,
+
                     userId,
                     roleId,
                     teamName,
+
                     error:
                         error.message,
                 },
@@ -430,15 +554,19 @@ class TeamDiscordService {
         }
 
         try {
-            await role.delete(reason);
+            await role.delete(
+                reason,
+            );
 
             logger.info(
                 'HCD managed team role deleted',
                 {
                     guildId:
                         role.guild?.id,
+
                     roleId:
                         role.id,
+
                     roleName:
                         role.name,
                 },
@@ -451,10 +579,13 @@ class TeamDiscordService {
                 {
                     guildId:
                         role.guild?.id,
+
                     roleId:
                         role.id,
+
                     roleName:
                         role.name,
+
                     error:
                         error.message,
                 },
