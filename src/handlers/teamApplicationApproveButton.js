@@ -1,12 +1,22 @@
 import {
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
     PermissionsBitField,
 } from 'discord.js';
 
 import TeamApplicationService
     from '../services/teamApplicationService.js';
 
+import TeamDiscordService
+    from '../services/teamDiscordService.js';
+
+import TeamPanelService
+    from '../services/teamPanelService.js';
+
 import {
     getPlayerMembership,
+    provisionTeamFromApplication,
 } from '../utils/database/teams.js';
 
 /**
@@ -370,63 +380,292 @@ export const teamApplicationApproveButtonHandler = {
             return;
         }
 
-        const captainMentions =
-            captainMembers
-                .map(
-                    member =>
-                        `<@${member.id}>`,
-                )
-                .join(', ');
+        let teamRole = null;
+        const assignedRoleUserIds = [];
 
-        const checks = [
-            '✅ Solicitud pendiente',
-            '✅ Cantidad de Capitanes válida',
-            '✅ Capitanes sin duplicados',
-            '✅ Capitanes presentes en HCD',
-            '✅ Capitanes disponibles para un roster',
-            '✅ HCD Hub puede administrar roles',
-        ];
+        try {
+            /**
+             * Create the managed Discord Team Role.
+             *
+             * Discord is provisioned before PostgreSQL because
+             * these changes can be rolled back if the database
+             * transaction fails.
+             */
+            teamRole =
+                await TeamDiscordService.createManagedRole({
+                    guild:
+                        interaction.guild,
 
-        if (managerMember) {
-            checks.push(
-                '✅ Líder de Facción presente en HCD',
-                '✅ Líder de Facción separado del roster competitivo',
+                    name:
+                        application.name,
+
+                    tag:
+                        application.tag,
+
+                    createdBy:
+                        interaction.user.tag,
+                });
+
+            /**
+             * Captains always receive the Team Role.
+             *
+             * The Líder de Facción receives the same Team Role
+             * but is intentionally NOT inserted into the
+             * competitive roster.
+             */
+            const roleRecipients = [
+                ...captainMembers,
+            ];
+
+            if (managerMember) {
+                roleRecipients.push(
+                    managerMember,
+                );
+            }
+
+            for (
+                const member
+                of roleRecipients
+            ) {
+                const assignment =
+                    await TeamDiscordService.assignTeamRole({
+                        guild:
+                            interaction.guild,
+
+                        userId:
+                            member.id,
+
+                        roleId:
+                            teamRole.id,
+
+                        teamName:
+                            application.name,
+                    });
+
+                /**
+                 * Only track roles that HCD Hub actually added.
+                 *
+                 * If the member somehow already had the role,
+                 * rollback must not remove something that was
+                 * not added by this approval attempt.
+                 */
+                if (assignment.assigned) {
+                    assignedRoleUserIds.push(
+                        member.id,
+                    );
+                }
+            }
+
+            /**
+             * This is the atomic PostgreSQL operation.
+             *
+             * Inside a single transaction it:
+             *
+             * - Locks the pending application
+             * - Validates it again
+             * - Creates the official HCD team
+             * - Inserts the Captains
+             * - Cancels their pending team invitations
+             * - Marks the application as approved
+             * - Links the application to the new Team ID
+             *
+             * Either all database changes commit or none do.
+             */
+            const provisionResult =
+                await provisionTeamFromApplication({
+                    guildId:
+                        interaction.guildId,
+
+                    applicationId,
+
+                    reviewedBy:
+                        interaction.user.id,
+
+                    roleId:
+                        teamRole.id,
+                });
+
+            const team =
+                provisionResult.team;
+
+            /**
+             * Refresh the public HCD teams panel.
+             *
+             * This is best-effort because the official team has
+             * already been committed successfully at this point.
+             * A panel failure should never destroy a valid team.
+             */
+            try {
+                await TeamPanelService.refreshGuildPanel(
+                    interaction.guild,
+                );
+            } catch {
+                // The team is already approved.
+                // The panel can be refreshed later.
+            }
+
+            const captainMentions =
+                captainMembers
+                    .map(
+                        member =>
+                            `<@${member.id}>`,
+                    )
+                    .join(', ');
+
+            const approvedDescription = [
+                `👤 **Solicitante:** <@${application.applicant_id}>`,
+                '',
+                `🏷️ **Nombre:** ${application.name}`,
+                `🔖 **TAG:** ${application.tag || 'Sin TAG'}`,
+                '',
+                `👥 **Capitanes:** ${captainMentions}`,
+            ];
+
+            if (managerMember) {
+                approvedDescription.push(
+                    `👑 **Líder de Facción:** <@${managerMember.id}>`,
+                );
+            }
+
+            approvedDescription.push(
+                '',
+                `🎭 **Team Role:** <@&${teamRole.id}>`,
+                `🆔 **Team ID:** \`${team.id}\``,
+                `🆔 **Solicitud:** \`${application.id}\``,
+                '',
+                `✅ **Estado:** Aprobada por <@${interaction.user.id}>`,
             );
-        }
 
-        await interaction.editReply({
-            embeds: [
-                {
+            /**
+             * Update the original message inside
+             * 📥・solicitudes-equipos.
+             *
+             * The review buttons disappear after approval.
+             */
+            try {
+                const approvedEmbed = {
                     color: 0x57F287,
 
                     title:
-                        'HCD | PREFLIGHT SUPERADO',
+                        'HCD | SOLICITUD APROBADA',
 
-                    description: [
-                        `La solicitud de **${application.name}${application.tag ? ` [${application.tag}]` : ''}** está preparada para ser provisionada`,
-                        '',
-                        `🆔 **Solicitud:** \`${application.id}\``,
-                        `👤 **Solicitante:** <@${application.applicant_id}>`,
-                        '',
-                        `👥 **Capitanes:** ${captainMentions}`,
-                        managerMember
-                            ? `👑 **Líder de Facción:** <@${managerMember.id}>`
-                            : '👑 **Líder de Facción:** No aplica',
-                        '',
-                        '**Comprobaciones**',
-                        ...checks,
-                        '',
-                        '🟢 **Preflight completado correctamente**',
-                        '',
-                        '🧪 Todavía no se ha creado ningún Team Role, equipo ni miembro del roster',
-                    ].join('\n'),
+                    description:
+                        approvedDescription.join('\n'),
 
                     footer: {
                         text:
-                            'HCD | Sistema de aprobación de equipos',
+                            'Hispanic Competitive Development',
                     },
-                },
-            ],
-        });
+
+                    timestamp:
+                        new Date().toISOString(),
+                };
+
+                if (application.logo_url) {
+                    approvedEmbed.image = {
+                        url:
+                            application.logo_url,
+                    };
+                }
+
+                await interaction.message.edit({
+                    embeds: [
+                        approvedEmbed,
+                    ],
+
+                    components: [],
+                });
+            } catch {
+                /**
+                 * Even if Discord cannot edit the old message,
+                 * PostgreSQL prevents the application from being
+                 * approved a second time.
+                 */
+            }
+
+            /**
+             * Private confirmation for the Owner/Admin
+             * who approved the application.
+             */
+            await interaction.editReply({
+                embeds: [
+                    {
+                        color: 0x57F287,
+
+                        title:
+                            'HCD | EQUIPO APROBADO',
+
+                        description: [
+                            `**${application.name}${application.tag ? ` [${application.tag}]` : ''}** fue creado correctamente como equipo oficial de HCD`,
+                            '',
+                            `🎭 **Team Role:** <@&${teamRole.id}>`,
+                            `👥 **Capitanes:** ${captainMentions}`,
+                            managerMember
+                                ? `👑 **Líder de Facción:** <@${managerMember.id}>`
+                                : '👑 **Líder de Facción:** No aplica',
+                            '',
+                            `🆔 **Team ID:** \`${team.id}\``,
+                            `🆔 **Solicitud:** \`${application.id}\``,
+                            '',
+                            '✅ **Solicitud aprobada correctamente**',
+                        ].join('\n'),
+
+                        footer: {
+                            text:
+                                'HCD | Sistema de aprobación de equipos',
+                        },
+                    },
+                ],
+            });
+        } catch (error) {
+            /**
+             * Roll back Discord-side changes.
+             *
+             * provisionTeamFromApplication() already performs its
+             * own PostgreSQL ROLLBACK when the DB operation fails.
+             */
+            if (teamRole) {
+                for (
+                    const userId
+                    of assignedRoleUserIds
+                ) {
+                    await TeamDiscordService.removeTeamRole({
+                        guild:
+                            interaction.guild,
+
+                        userId,
+
+                        roleId:
+                            teamRole.id,
+
+                        teamName:
+                            application.name,
+                    });
+                }
+
+                await TeamDiscordService.deleteManagedRole({
+                    role:
+                        teamRole,
+
+                    reason:
+                        `Rollback failed HCD application #${application.id}`,
+                });
+            }
+
+            await interaction.editReply({
+                content: [
+                    '❌ **No se pudo aprobar la solicitud.**',
+                    '',
+                    'HCD Hub revirtió los cambios de Discord que alcanzó a realizar.',
+                    'La solicitud debería continuar pendiente si PostgreSQL no alcanzó a confirmar la operación.',
+                    '',
+                    `Detalle: \`${String(error?.message || 'Error desconocido').slice(0, 500)}\``,
+                ].join('\n'),
+
+                embeds: [],
+            });
+
+            return;
+        }
     },
 };
