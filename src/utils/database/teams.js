@@ -209,7 +209,6 @@ export async function deactivateTeam(guildId, teamId) {
     });
 }
 
-
 /**
  * Deactivates a team, clears its competitive roster, and cancels
  * every pending invitation inside a single PostgreSQL transaction.
@@ -830,6 +829,268 @@ export async function acceptTeamInvite(guildId, inviteId, userId) {
             userId,
             error: error.message,
         });
+
+        throw error;
+    } finally {
+        connection.release();
+    }
+}
+
+/**
+ * Adds multiple players directly to a competitive roster inside one
+ * PostgreSQL transaction.
+ *
+ * Intended for trusted administrative flows such as approved team
+ * applications, where the selected Captains should enter the roster
+ * without receiving a normal invitation.
+ *
+ * All members are inserted together or none are inserted.
+ */
+export async function addTeamMembersDirect({
+    guildId,
+    teamId,
+    members = [],
+}) {
+    ensureDatabaseAvailable();
+
+    if (!guildId || !teamId) {
+        throw new Error('Guild and team are required');
+    }
+
+    if (!Array.isArray(members) || members.length === 0) {
+        throw new Error('At least one team member is required');
+    }
+
+    const normalizedMembers = members.map((member) => {
+        if (!member?.userId) {
+            throw new Error('Every team member must have a valid user ID');
+        }
+
+        return {
+            userId: String(member.userId).trim(),
+            position: normalizePosition(member.position),
+        };
+    });
+
+    const uniqueUserIds =
+        new Set(
+            normalizedMembers.map(
+                (member) => member.userId,
+            ),
+        );
+
+    if (uniqueUserIds.size !== normalizedMembers.length) {
+        throw new Error('The same player cannot be added more than once');
+    }
+
+    const requestedCounts = {
+        captain: 0,
+        main: 0,
+        sub: 0,
+        total: normalizedMembers.length,
+    };
+
+    for (const member of normalizedMembers) {
+        requestedCounts[member.position] += 1;
+    }
+
+    for (const [position, limit] of Object.entries(POSITION_LIMITS)) {
+        if (requestedCounts[position] > limit) {
+            return {
+                added: false,
+                reason: 'slot_full',
+                position,
+                requested: requestedCounts[position],
+                limit,
+            };
+        }
+    }
+
+    if (requestedCounts.total > 9) {
+        return {
+            added: false,
+            reason: 'roster_full',
+            requested: requestedCounts.total,
+            limit: 9,
+        };
+    }
+
+    const connection = await pgDb.pool.connect();
+
+    try {
+        await connection.query('BEGIN');
+
+        const teamResult = await connection.query(
+            `SELECT *
+             FROM ${t.hcd_teams}
+             WHERE guild_id = $1
+               AND id = $2
+               AND active = TRUE
+             FOR UPDATE`,
+            [
+                guildId,
+                teamId,
+            ],
+        );
+
+        const team = teamResult.rows[0];
+
+        if (!team) {
+            throw new Error('Team not found or inactive');
+        }
+
+        const userIds =
+            normalizedMembers.map(
+                (member) => member.userId,
+            );
+
+        const existingMembershipResult =
+            await connection.query(
+                `SELECT *
+                 FROM ${t.hcd_team_members}
+                 WHERE guild_id = $1
+                   AND user_id = ANY($2::text[])
+                 FOR UPDATE`,
+                [
+                    guildId,
+                    userIds,
+                ],
+            );
+
+        if (existingMembershipResult.rows.length > 0) {
+            await connection.query('ROLLBACK');
+
+            return {
+                added: false,
+                reason: 'already_in_team',
+                memberships:
+                    existingMembershipResult.rows,
+            };
+        }
+
+        const counts = await getRosterCounts(
+            guildId,
+            team.id,
+            connection,
+        );
+
+        for (const [position, limit] of Object.entries(POSITION_LIMITS)) {
+            if (
+                counts[position] +
+                    requestedCounts[position] >
+                limit
+            ) {
+                await connection.query('ROLLBACK');
+
+                return {
+                    added: false,
+                    reason: 'slot_full',
+                    position,
+                    counts,
+                    requested:
+                        requestedCounts[position],
+                    limit,
+                };
+            }
+        }
+
+        if (
+            counts.total +
+                requestedCounts.total >
+            9
+        ) {
+            await connection.query('ROLLBACK');
+
+            return {
+                added: false,
+                reason: 'roster_full',
+                counts,
+                requested:
+                    requestedCounts.total,
+                limit: 9,
+            };
+        }
+
+        const insertedMembers = [];
+
+        for (const member of normalizedMembers) {
+            const memberResult =
+                await connection.query(
+                    `INSERT INTO ${t.hcd_team_members}
+                        (
+                            guild_id,
+                            team_id,
+                            user_id,
+                            position
+                        )
+                     VALUES ($1, $2, $3, $4)
+                     RETURNING *`,
+                    [
+                        guildId,
+                        team.id,
+                        member.userId,
+                        member.position,
+                    ],
+                );
+
+            insertedMembers.push(
+                memberResult.rows[0],
+            );
+        }
+
+        await connection.query(
+            `UPDATE ${t.hcd_team_invites}
+             SET status = 'cancelled'
+             WHERE guild_id = $1
+               AND user_id = ANY($2::text[])
+               AND status = 'pending'`,
+            [
+                guildId,
+                userIds,
+            ],
+        );
+
+        await connection.query('COMMIT');
+
+        logger.info(
+            'HCD team members added directly',
+            {
+                guildId,
+                teamId: team.id,
+                memberCount:
+                    insertedMembers.length,
+                userIds,
+            },
+        );
+
+        return {
+            added: true,
+            team,
+            members: insertedMembers,
+        };
+    } catch (error) {
+        try {
+            await connection.query('ROLLBACK');
+        } catch (rollbackError) {
+            logger.error(
+                'Failed to rollback direct HCD team member transaction',
+                {
+                    guildId,
+                    teamId,
+                    error:
+                        rollbackError.message,
+                },
+            );
+        }
+
+        logger.error(
+            'Failed to add HCD team members directly',
+            {
+                guildId,
+                teamId,
+                error: error.message,
+            },
+        );
 
         throw error;
     } finally {
