@@ -39,7 +39,7 @@ export const teamApplicationTypeHandler = {
             .setLabel('Nombre del equipo')
             .setStyle(TextInputStyle.Short)
             .setPlaceholder(
-                'Ejemplo: Black Akron',
+                'Ejemplo: Ryodan',
             )
             .setRequired(true)
             .setMinLength(2)
@@ -50,7 +50,7 @@ export const teamApplicationTypeHandler = {
             .setLabel('TAG del equipo')
             .setStyle(TextInputStyle.Short)
             .setPlaceholder(
-                'Ejemplo: BA',
+                'Ejemplo: RYO',
             )
             .setRequired(true)
             .setMaxLength(20);
